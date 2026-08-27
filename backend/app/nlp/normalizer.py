@@ -7,8 +7,8 @@ from email_validator import validate_email, EmailNotValidError
 from typing import Dict, Any, List
 
 # 初始化 OpenCC 轉換器
-s2t_converter = opencc.OpenCC('s2t.json')  # 簡體轉繁體
-t2s_converter = opencc.OpenCC('t2s.json')  # 繁體轉簡體
+s2t_converter = opencc.OpenCC('s2t')  # 簡體轉繁體
+t2s_converter = opencc.OpenCC('t2s')  # 繁體轉簡體
 
 class InputNormalizer:
     @staticmethod
