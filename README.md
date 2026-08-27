@@ -13,7 +13,7 @@
 
 ### 1. 一鍵安裝依賴 (Kali / Ubuntu / Debian)
 ```bash
-git clone [https://github.com/](https://github.com/)<你的帳號>/<你的專案名稱>.git
-cd <你的專案名稱>
+git clone https://github.com/jasonsuuu999999/osint-framework.git
+cd osint-framework
 chmod +x scripts/setup.sh
 ./scripts/setup.sh
