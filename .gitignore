@@ -1,0 +1,24 @@
+# 環境變數與機密金鑰 (絕對不能上傳)
+.env
+backend/.env
+*.env
+
+# Python 快取與虛擬環境
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+
+# OSINT 工具產生的本機報表與快取
+.maigret/
+*.log
+*.sqlite3
+*.csv
+reports/
+
+# IDE 與系統檔案
+.vscode/
+.idea/
+.DS_Store
