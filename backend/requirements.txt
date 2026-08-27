@@ -17,3 +17,7 @@ python-dotenv>=1.0.1
 pyjwt>=2.8.0
 passlib[bcrypt]>=1.7.4
 python-multipart>=0.0.9
+python-whois
+dnspython
+httpx
+beautifulsoup4

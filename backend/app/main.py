@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-# 引入自訂模組
+# 引入專案自訂模組
 from app.models.database import (
     AsyncSessionLocal,
     init_db,
@@ -39,7 +39,7 @@ app = FastAPI(
     description="多語系多源 OSINT 自動化情報調查與視覺化平台"
 )
 
-# CORS 設定
+# CORS 跨來源設定
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -48,17 +48,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 資料庫 Session 依賴
+# 資料庫 Session 依賴注入
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
 
-# Pydantic 請求模型
+# Pydantic 請求資料模型
 class CreateScanRequest(BaseModel):
     target: str
     tools: Optional[List[str]] = None  # None 代表全自動一鍵執行
 
-# 系統啟動事件：初始化 DB 與預設管理員帳號
+# 系統啟動事件：初始化 DB 表結構與預設管理員帳號
 @app.on_event("startup")
 async def on_startup():
     await init_db()
@@ -75,7 +75,7 @@ async def on_startup():
             await session.commit()
             print("[*] 預設管理員帳號已建立：admin / admin123")
 
-# ==================== 認證 API 路由 ====================
+# ==================== 認證授權 API 路由 ====================
 
 @app.post("/api/auth/login", summary="使用者登入取得 JWT Token")
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
@@ -106,7 +106,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
 @app.get("/api/auth/me", summary="取得當前登入者資訊")
 async def get_me(current_user: User = Depends(get_current_user)):
     return {
-        "id": current_user.id,
+        "id": str(current_user.id),
         "username": current_user.username,
         "role": current_user.role,
         "created_at": current_user.created_at
@@ -130,7 +130,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
             # 1. 人名 / 暱稱探測
             if target_type == "PERSON" and "maigret" in tools_to_run:
                 expanded = InputNormalizer.expand_person_identity(target)
-                alias_to_test = expanded["pinyin_continuous"] if expanded["pinyin_continuous"] else target
+                alias_to_test = expanded.get("pinyin_continuous") or target
                 
                 res = await OSINTModules.run_maigret(alias_to_test)
                 log = ScanLog(
@@ -162,7 +162,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                 for plat in res.get("platforms_found", []):
                     ent = Entity(case_id=case.id, category="SERVICE_REGISTRATION", value=plat, source_tool="holehe")
                     db.add(ent)
-                    discovered_entities_text.append(f"註冊服務: {plat}")
+                    discovered_entities_text.append(f"註冊服務/記錄: {plat}")
 
             # 3. 網域資產枚舉
             elif target_type == "DOMAIN" and "theHarvester" in tools_to_run:
@@ -175,7 +175,11 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                     execution_time_sec=res["duration"]
                 )
                 db.add(log)
-                discovered_entities_text.append(f"網域資產探測完成: {target}")
+
+                for asset in res.get("assets_found", []):
+                    ent = Entity(case_id=case.id, category="DOMAIN_ASSET", value=asset, source_tool="theHarvester")
+                    db.add(ent)
+                    discovered_entities_text.append(f"資產/記錄: {asset}")
 
             # 4. AI 情資自動彙整
             summary = await AIAnalyst.generate_dossier_summary(target, target_type, discovered_entities_text)
@@ -209,6 +213,7 @@ async def create_investigation(
     await db.commit()
     await db.refresh(new_case)
 
+    # 非同步背景執行探測
     background_tasks.add_task(
         execute_investigation_pipeline,
         new_case.id,
@@ -242,7 +247,7 @@ async def get_case_detail(
     logs = logs_res.scalars().all()
 
     return {
-        "id": case.id,
+        "id": str(case.id),
         "title": case.title,
         "target": case.target_input,
         "type": case.target_type,
@@ -273,7 +278,6 @@ async def get_case_detail(
 
 # ==================== 前端靜態檔案掛載 ====================
 
-# 定義前端目錄路徑 (假設目錄結構為根目錄下的 frontend/)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 frontend_dir = os.path.join(BASE_DIR, "frontend")
 
