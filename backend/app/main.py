@@ -8,9 +8,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, or_, delete
+from sqlalchemy import select, desc, or_
 
-# 引入專案自訂模組
+# 專案內部模組
 from app.models.database import (
     AsyncSessionLocal,
     init_db,
@@ -39,6 +39,7 @@ app = FastAPI(
     description="多語系多源 OSINT 自動化情報調查與視覺化平台"
 )
 
+# CORS 跨來源設定
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -47,6 +48,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 資料庫 Session 依賴
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
@@ -85,9 +87,9 @@ async def on_startup():
             await session.commit()
             print("[*] 預設管理員帳號已建立：admin / admin123")
 
-# ==================== 認證 API ====================
+# ==================== 認證與身分 API ====================
 
-@app.post("/api/auth/login", summary="登入取得 Token")
+@app.post("/api/auth/login", summary="登入取得 JWT Token")
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == form_data.username))
     user = result.scalar_one_or_none()
@@ -110,7 +112,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
         "role": user.role.value
     }
 
-@app.get("/api/auth/me", summary="取得當前使用者資訊")
+@app.get("/api/auth/me", summary="取得當前登入者資訊")
 async def get_me(current_user: User = Depends(get_current_user)):
     return {
         "id": str(current_user.id),
@@ -119,14 +121,14 @@ async def get_me(current_user: User = Depends(get_current_user)):
         "created_at": current_user.created_at
     }
 
-# ==================== 使用者管理 API (限 ADMIN) ====================
+# ==================== 使用者帳號管理 (限 ADMIN) ====================
 
-@app.get("/api/users", summary="取得使用者清單")
+@app.get("/api/users", summary="取得所有使用者清單")
 async def list_users(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles([UserRole.ADMIN]))
 ):
-    result = await db.execute(select(User).order_by(User.created_at.desc()))
+    result = await db.execute(select(User).order_by(desc(User.created_at)))
     users = result.scalars().all()
     return [
         {
@@ -139,7 +141,7 @@ async def list_users(
         for u in users
     ]
 
-@app.post("/api/users", summary="新增使用者")
+@app.post("/api/users", summary="建立新使用者帳號")
 async def create_user(
     payload: CreateUserRequest,
     db: AsyncSession = Depends(get_db),
@@ -160,7 +162,7 @@ async def create_user(
     await db.refresh(new_user)
     return {"message": "使用者建立成功", "id": str(new_user.id)}
 
-@app.put("/api/users/{user_id}", summary="修改使用者權限或密碼")
+@app.put("/api/users/{user_id}", summary="修改使用者密碼或權限角色")
 async def update_user(
     user_id: uuid.UUID,
     payload: UpdateUserRequest,
@@ -181,7 +183,7 @@ async def update_user(
     await db.commit()
     return {"message": "使用者資料更新成功"}
 
-@app.delete("/api/users/{user_id}", summary="刪除使用者")
+@app.delete("/api/users/{user_id}", summary="刪除使用者帳號")
 async def delete_user(
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -195,9 +197,9 @@ async def delete_user(
 
     await db.delete(user)
     await db.commit()
-    return {"message": "使用者已刪除"}
+    return {"message": "使用者已成功刪除"}
 
-# ==================== 調查任務背景流水線 ====================
+# ==================== 非同步調查流水線 ====================
 
 async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target_type: str, selected_tools: Optional[List[str]]):
     async with AsyncSessionLocal() as db:
@@ -209,63 +211,75 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
         await db.commit()
 
         discovered_entities_text = []
+        is_tool_enabled = lambda name: selected_tools is None or name in selected_tools
 
         try:
-            # 1. 必跑：原生高速探測
-            native_res = await OSINTModules.run_native_recon(target, target_type)
-            for r in native_res.get("results", []):
-                ent = Entity(case_id=case.id, category="RECON_ASSET", value=r, source_tool="native_engine")
-                db.add(ent)
-                discovered_entities_text.append(r)
+            # 1. 原生高速探測引擎 (保底資料)
+            if is_tool_enabled("native_engine"):
+                native_res = await OSINTModules.run_native_recon(target, target_type)
+                for r in native_res.get("results", []):
+                    ent = Entity(case_id=case.id, category="RECON_ASSET", value=r, source_tool="native_engine")
+                    db.add(ent)
+                    discovered_entities_text.append(r)
 
-            # 2. 依照目標型別調用工具
+            # 2. 人名探測模組
             if target_type == "PERSON":
                 expanded = InputNormalizer.expand_person_identity(target)
                 alias = expanded.get("pinyin_continuous") or target
                 
-                m_res = await OSINTModules.run_maigret(alias)
-                db.add(ScanLog(case_id=case.id, tool_name="maigret", status="COMPLETED", stdout_log=m_res["raw_log"], execution_time_sec=m_res["duration"]))
-                for a in m_res.get("accounts", []):
-                    db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="maigret"))
-                    discovered_entities_text.append(f"Maigret: {a}")
+                if is_tool_enabled("maigret"):
+                    m_res = await OSINTModules.run_maigret(alias)
+                    db.add(ScanLog(case_id=case.id, tool_name="maigret", status="COMPLETED", stdout_log=m_res["raw_log"], execution_time_sec=m_res["duration"]))
+                    for a in m_res.get("accounts", []):
+                        db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="maigret"))
+                        discovered_entities_text.append(f"Maigret 社群: {a}")
 
-                s_res = await OSINTModules.run_sherlock(alias)
-                db.add(ScanLog(case_id=case.id, tool_name="sherlock", status="COMPLETED", stdout_log=s_res["raw_log"], execution_time_sec=s_res["duration"]))
-                for a in s_res.get("accounts", []):
-                    db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="sherlock"))
-                    discovered_entities_text.append(f"Sherlock: {a}")
+                if is_tool_enabled("sherlock"):
+                    s_res = await OSINTModules.run_sherlock(alias)
+                    db.add(ScanLog(case_id=case.id, tool_name="sherlock", status="COMPLETED", stdout_log=s_res["raw_log"], execution_time_sec=s_res["duration"]))
+                    for a in s_res.get("accounts", []):
+                        db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="sherlock"))
+                        discovered_entities_text.append(f"Sherlock 社群: {a}")
 
+            # 3. 電子郵件模組
             elif target_type == "EMAIL":
-                h_res = await OSINTModules.run_holehe(target)
-                db.add(ScanLog(case_id=case.id, tool_name="holehe", status="COMPLETED", stdout_log=h_res["raw_log"], execution_time_sec=h_res["duration"]))
-                for p in h_res.get("platforms", []):
-                    db.add(Entity(case_id=case.id, category="SERVICE_REGISTRATION", value=p, source_tool="holehe"))
-                    discovered_entities_text.append(f"註冊平台: {p}")
+                if is_tool_enabled("holehe"):
+                    h_res = await OSINTModules.run_holehe(target)
+                    db.add(ScanLog(case_id=case.id, tool_name="holehe", status="COMPLETED", stdout_log=h_res["raw_log"], execution_time_sec=h_res["duration"]))
+                    for p in h_res.get("platforms", []):
+                        db.add(Entity(case_id=case.id, category="SERVICE_REGISTRATION", value=p, source_tool="holehe"))
+                        discovered_entities_text.append(f"已註冊平台: {p}")
 
+            # 4. 電話號碼模組
             elif target_type == "PHONE":
-                p_res = await OSINTModules.run_phoneinfoga(target)
-                db.add(ScanLog(case_id=case.id, tool_name="phoneinfoga", status="COMPLETED", stdout_log=p_res["raw_log"], execution_time_sec=p_res["duration"]))
-                for d in p_res.get("details", []):
-                    db.add(Entity(case_id=case.id, category="PHONE_INTEL", value=d, source_tool="phoneinfoga"))
-                    discovered_entities_text.append(f"門號情資: {d}")
+                if is_tool_enabled("phoneinfoga"):
+                    p_res = await OSINTModules.run_phoneinfoga(target)
+                    db.add(ScanLog(case_id=case.id, tool_name="phoneinfoga", status="COMPLETED", stdout_log=p_res["raw_log"], execution_time_sec=p_res["duration"]))
+                    for d in p_res.get("details", []):
+                        db.add(Entity(case_id=case.id, category="PHONE_INTEL", value=d, source_tool="phoneinfoga"))
+                        discovered_entities_text.append(f"門號情資: {d}")
 
+            # 5. 網域與資產模組
             elif target_type == "DOMAIN":
-                th_res = await OSINTModules.run_theharvester(target)
-                db.add(ScanLog(case_id=case.id, tool_name="theHarvester", status="COMPLETED", stdout_log=th_res["raw_log"], execution_time_sec=th_res["duration"]))
+                if is_tool_enabled("theHarvester"):
+                    th_res = await OSINTModules.run_theharvester(target)
+                    db.add(ScanLog(case_id=case.id, tool_name="theHarvester", status="COMPLETED", stdout_log=th_res["raw_log"], execution_time_sec=th_res["duration"]))
 
-                am_res = await OSINTModules.run_amass(target)
-                db.add(ScanLog(case_id=case.id, tool_name="amass", status="COMPLETED", stdout_log=am_res["raw_log"], execution_time_sec=am_res["duration"]))
-                for sub in am_res.get("subdomains", []):
-                    db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=sub, source_tool="amass"))
-                    discovered_entities_text.append(f"Amass 子網域: {sub}")
+                if is_tool_enabled("amass"):
+                    am_res = await OSINTModules.run_amass(target)
+                    db.add(ScanLog(case_id=case.id, tool_name="amass", status="COMPLETED", stdout_log=am_res["raw_log"], execution_time_sec=am_res["duration"]))
+                    for sub in am_res.get("subdomains", []):
+                        db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=sub, source_tool="amass"))
+                        discovered_entities_text.append(f"Amass 子網域: {sub}")
 
-                dns_res = await OSINTModules.run_dnsrecon(target)
-                db.add(ScanLog(case_id=case.id, tool_name="dnsrecon", status="COMPLETED", stdout_log=dns_res["raw_log"], execution_time_sec=dns_res["duration"]))
-                for rec in dns_res.get("records", []):
-                    db.add(Entity(case_id=case.id, category="DNS_RECORD", value=rec, source_tool="dnsrecon"))
-                    discovered_entities_text.append(rec)
+                if is_tool_enabled("dnsrecon"):
+                    dns_res = await OSINTModules.run_dnsrecon(target)
+                    db.add(ScanLog(case_id=case.id, tool_name="dnsrecon", status="COMPLETED", stdout_log=dns_res["raw_log"], execution_time_sec=dns_res["duration"]))
+                    for rec in dns_res.get("records", []):
+                        db.add(Entity(case_id=case.id, category="DNS_RECORD", value=rec, source_tool="dnsrecon"))
+                        discovered_entities_text.append(rec)
 
-            # 3. AI 總結
+            # 6. AI 情報自動總結
             summary = await AIAnalyst.generate_dossier_summary(target, target_type, discovered_entities_text)
             case.ai_summary = summary
             case.status = CaseStatus.COMPLETED
@@ -297,6 +311,7 @@ async def create_investigation(
     await db.commit()
     await db.refresh(new_case)
 
+    # 非同步背景執行探測流水線
     background_tasks.add_task(
         execute_investigation_pipeline,
         new_case.id,
@@ -305,11 +320,16 @@ async def create_investigation(
         payload.tools
     )
 
-    return {"case_id": str(new_case.id), "target": payload.target, "detected_type": detected_type, "status": "QUEUED"}
+    return {
+        "case_id": str(new_case.id),
+        "target": payload.target,
+        "detected_type": detected_type,
+        "status": "QUEUED"
+    }
 
 @app.get("/api/cases", summary="取得/搜尋調查案件列表")
 async def list_cases(
-    q: Optional[str] = Query(None, description="搜尋關鍵字"),
+    q: Optional[str] = Query(None, description="搜尋目標或標題關鍵字"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -331,7 +351,7 @@ async def list_cases(
         for c in cases
     ]
 
-@app.get("/api/cases/{case_id}", summary="取得案件詳情")
+@app.get("/api/cases/{case_id}", summary="取得調查案件詳情與實體節點")
 async def get_case_detail(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -391,7 +411,7 @@ async def delete_case(
     await db.commit()
     return {"message": "案件已成功刪除"}
 
-# ==================== 靜態首頁掛載 ====================
+# ==================== 前端靜態頁面掛載 ====================
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 frontend_dir = os.path.join(BASE_DIR, "frontend")

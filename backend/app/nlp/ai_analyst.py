@@ -4,14 +4,12 @@ from pathlib import Path
 from typing import Optional, List
 from dotenv import load_dotenv
 
-# 強制載入 backend/.env
 ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(dotenv_path=ENV_PATH)
 
 class AIAnalyst:
     @staticmethod
     async def generate_dossier_summary(target: str, target_type: str, entities_summary: List[str]) -> str:
-        # 熱讀取環境變數
         load_dotenv(dotenv_path=ENV_PATH, override=True)
         g_key = os.getenv("GEMINI_API_KEY", "").strip()
         o_key = os.getenv("OPENAI_API_KEY", "").strip()
@@ -34,25 +32,30 @@ class AIAnalyst:
 """
         error_details = []
 
-        # 1. 優先使用 Gemini
+        # 1. 優先使用 Gemini (動態獲取可用模型)
         if g_key:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=g_key)
                 
-                # 兼容不同 SDK 版本的常用模型名稱
-                models = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro", "gemini-pro"]
-                for m in models:
-                    try:
-                        model = genai.GenerativeModel(m)
-                        response = model.generate_content(prompt)
-                        if response and response.text:
-                            return response.text
-                    except Exception as model_err:
-                        error_details.append(f"Gemini({m}): {str(model_err)}")
-                        continue
+                # 自動搜尋帳號當前真正支援 generateContent 的模型清單
+                supported_models = []
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        supported_models.append(m.name)
+                
+                if not supported_models:
+                    error_details.append("Gemini: 此 API Key 未找到支援 generateContent 的可用模型")
+                else:
+                    # 優先選擇 flash，若無則按順序取第一個
+                    selected_model = next((m for m in supported_models if 'flash' in m), supported_models[0])
+                    model = genai.GenerativeModel(selected_model)
+                    response = model.generate_content(prompt)
+                    if response and response.text:
+                        return response.text
+
             except Exception as ge:
-                error_details.append(f"Gemini Init: {str(ge)}")
+                error_details.append(f"Gemini 動態調用失敗: {str(ge)}")
 
         # 2. 備援使用 OpenAI
         if o_key:

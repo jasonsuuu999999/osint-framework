@@ -51,15 +51,13 @@
             </div>
         </div>
 
-        <!-- 使用者管理 Modal (限 ADMIN) -->
+        <!-- 使用者管理 Modal -->
         <div v-if="showUserModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div class="bg-cyber-800 border border-gray-700 p-6 rounded-lg max-w-2xl w-full shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
                 <div class="flex justify-between items-center border-b border-gray-700 pb-3">
                     <h2 class="text-sm font-bold text-white flex items-center gap-2"><span>👥</span> 使用者帳號與權限管理</h2>
                     <button @click="showUserModal = false" class="text-gray-400 hover:text-white">&times;</button>
                 </div>
-
-                <!-- 新增帳號區 -->
                 <div class="bg-cyber-900 p-3 rounded border border-gray-700 flex gap-2 items-center flex-wrap">
                     <input v-model="newUser.username" placeholder="新帳號" class="bg-cyber-800 border border-gray-600 px-2 py-1 text-xs rounded text-white flex-1">
                     <input v-model="newUser.password" type="password" placeholder="密碼" class="bg-cyber-800 border border-gray-600 px-2 py-1 text-xs rounded text-white flex-1">
@@ -70,8 +68,6 @@
                     </select>
                     <button @click="createUser" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs px-3 py-1 rounded font-bold">建立</button>
                 </div>
-
-                <!-- 使用者清單 -->
                 <div class="flex-1 overflow-y-auto space-y-2">
                     <div v-for="u in usersList" :key="u.id" class="flex justify-between items-center bg-cyber-900 p-2.5 rounded border border-gray-800 text-xs">
                         <div>
@@ -112,8 +108,37 @@
                 <div class="p-4 space-y-3 border-b border-gray-800">
                     <div>
                         <label class="block text-xs font-semibold text-gray-400 uppercase mb-1">調查目標 (Target)</label>
-                        <input v-model="targetInput" type="text" placeholder="網域、姓名、Email..." class="w-full bg-cyber-900 border border-gray-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-cyber-accent" :disabled="isLoading" @keyup.enter="startInvestigation"/>
+                        <input v-model="targetInput" type="text" placeholder="網域、姓名、Email、電話..." class="w-full bg-cyber-900 border border-gray-700 rounded px-3 py-2 text-xs text-white focus:outline-none focus:border-cyber-accent" :disabled="isLoading" @keyup.enter="startInvestigation"/>
                     </div>
+
+                    <!-- 模式選擇 -->
+                    <div class="space-y-1.5">
+                        <label class="block text-xs font-semibold text-gray-400 uppercase">執行模式</label>
+                        <div class="flex gap-4">
+                            <label class="flex items-center text-xs cursor-pointer">
+                                <input type="radio" value="auto" v-model="mode" class="text-cyber-accent">
+                                <span class="ml-1.5 text-gray-300">⚡ 一鍵全執行</span>
+                            </label>
+                            <label class="flex items-center text-xs cursor-pointer">
+                                <input type="radio" value="custom" v-model="mode" class="text-cyber-accent">
+                                <span class="ml-1.5 text-gray-300">🛠️ 自選工具</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- 自選工具勾選清單 -->
+                    <div v-if="mode === 'custom'" class="bg-cyber-900 p-2.5 rounded border border-gray-700 space-y-1.5 text-xs max-h-40 overflow-y-auto">
+                        <div class="text-[11px] font-bold text-gray-400 mb-1 border-b border-gray-800 pb-1">勾選啟用的模組：</div>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="native_engine" v-model="selectedTools" class="mr-2"> 原生高速引擎 (DNS/WHOIS/HTTP)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="maigret" v-model="selectedTools" class="mr-2"> Maigret (社群帳號)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="sherlock" v-model="selectedTools" class="mr-2"> Sherlock (社群足跡)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="holehe" v-model="selectedTools" class="mr-2"> Holehe (Email 註冊反查)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="phoneinfoga" v-model="selectedTools" class="mr-2"> PhoneInfoga (電話情資)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="theHarvester" v-model="selectedTools" class="mr-2"> theHarvester (資產)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="amass" v-model="selectedTools" class="mr-2"> Amass (子網域枚舉)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="dnsrecon" v-model="selectedTools" class="mr-2"> DNSRecon (DNS 解析)</label>
+                    </div>
+
                     <button @click="startInvestigation" :disabled="isLoading || !targetInput.trim()" class="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-white text-xs font-bold py-2 rounded transition flex justify-center items-center">
                         <span v-if="!isLoading">🚀 開始新調查</span>
                         <span v-else>探測中...</span>
@@ -142,7 +167,6 @@
                                 <span>{{ c.created_at }}</span>
                                 <span :class="c.status === 'COMPLETED' ? 'text-emerald-400' : 'text-yellow-400'">{{ c.status }}</span>
                             </div>
-                            <!-- 刪除按鈕 (Hover 顯示) -->
                             <button v-if="userProfile.role === 'ADMIN'" @click.stop="deleteCase(c.id)" class="hidden group-hover:block absolute top-2 right-2 bg-red-900/80 hover:bg-red-700 text-white rounded px-1.5 py-0.5 text-[10px]">
                                 刪除
                             </button>
@@ -202,12 +226,13 @@
                 const loginError = ref('');
                 const targetInput = ref('');
                 const searchQuery = ref('');
+                const mode = ref('auto');
+                const selectedTools = ref(['native_engine', 'maigret', 'sherlock', 'holehe', 'phoneinfoga', 'theHarvester', 'amass', 'dnsrecon']);
                 const isLoading = ref(false);
                 const activeTab = ref('ai');
                 const currentCase = ref({});
                 const historyCases = ref([]);
 
-                // 使用者管理
                 const showUserModal = ref(false);
                 const usersList = ref([]);
                 const newUser = ref({ username: '', password: '', role: 'ANALYST' });
@@ -301,7 +326,6 @@
                     }
                 };
 
-                // 使用者管理
                 const openUserManagement = async () => {
                     showUserModal.value = true;
                     fetchUsers();
@@ -378,10 +402,15 @@
                     if (!targetInput.value.trim()) return;
                     isLoading.value = true;
                     try {
+                        const payload = {
+                            target: targetInput.value.trim(),
+                            tools: mode.value === 'custom' ? selectedTools.value : null
+                        };
+
                         const res = await fetch('/api/investigate', {
                             method: 'POST',
                             headers: authHeaders(),
-                            body: JSON.stringify({ target: targetInput.value.trim() })
+                            body: JSON.stringify(payload)
                         });
                         const data = await res.json();
                         if (data.case_id) pollCaseStatus(data.case_id);
@@ -416,7 +445,7 @@
 
                 return {
                     isAuthenticated, userProfile, loginForm, loginError, handleLogin, handleLogout,
-                    targetInput, searchQuery, isLoading, activeTab, currentCase, historyCases, fetchHistoryCases,
+                    targetInput, searchQuery, mode, selectedTools, isLoading, activeTab, currentCase, historyCases, fetchHistoryCases,
                     loadCase, deleteCase, startInvestigation, resetGraphLayout,
                     showUserModal, usersList, newUser, openUserManagement, createUser, promptResetPassword, deleteUser
                 };
