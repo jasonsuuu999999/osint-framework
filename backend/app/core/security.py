@@ -12,18 +12,18 @@ from app.models.database import AsyncSessionLocal, User, UserRole
 
 SECRET_KEY = os.getenv("APP_SECRET", "super-secret-jwt-key-for-osint")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 天
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # one day
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """驗證明文密碼與 bcrypt 雜湊值 (截斷至 72 bytes 避免溢位)"""
+    """Verify plaintext password against the bcrypt hash value (truncate to 72 bytes to avoid overflow)."""
     password_bytes = plain_password.encode('utf-8')[:72]
     hashed_bytes = hashed_password.encode('utf-8')
     return bcrypt.checkpw(password_bytes, hashed_bytes)
 
 def get_password_hash(password: str) -> str:
-    """產生 bcrypt 雜湊值 (截斷至 72 bytes 避免溢位)"""
+    """Generate bcrypt hash value (truncated to 72 bytes to avoid overflow)."""
     password_bytes = password.encode('utf-8')[:72]
     salt = bcrypt.gensalt()
     return bcrypt.hashpw(password_bytes, salt).decode('utf-8')
@@ -37,7 +37,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="登入憑證無效或已過期",
+        detail="Login credentials invalid or expired.",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
@@ -56,12 +56,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         return user
 
 def require_roles(allowed_roles: List[UserRole]):
-    """角色權限檢查裝飾依賴"""
+    """Role permission check"""
     def role_checker(current_user: User = Depends(get_current_user)):
         if current_user.role not in allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="權限不足，無法執行此操作"
+                detail="Insufficient permissions to operate"
             )
         return current_user
     return role_checker
