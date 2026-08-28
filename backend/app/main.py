@@ -35,7 +35,7 @@ from app.nlp.ai_analyst import AIAnalyst
 
 app = FastAPI(
     title="OSINT Investigation Platform API",
-    version="1.4.0",
+    version="1.4.1",
     description="Multi-Entity OSINT Automation & Intelligence Visualization Platform"
 )
 
@@ -51,6 +51,14 @@ async def get_db():
     """Async database session dependency."""
     async with AsyncSessionLocal() as session:
         yield session
+
+# ==================== Helper Functions ====================
+
+def get_enum_value(val) -> str:
+    """Helper to safely extract string values from both Enums and raw strings."""
+    if val is None:
+        return ""
+    return val.value if hasattr(val, "value") else str(val)
 
 # ==================== Pydantic Schemas ====================
 
@@ -80,7 +88,7 @@ async def on_startup():
             admin_user = User(
                 username="admin",
                 hashed_password=get_password_hash("admin123"),
-                role=UserRole.ADMIN,
+                role=UserRole.ADMIN.value,
                 is_active=True
             )
             session.add(admin_user)
@@ -104,12 +112,13 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled.")
 
-    access_token = create_access_token(data={"sub": user.username, "role": user.role.value})
+    role_str = get_enum_value(user.role)
+    access_token = create_access_token(data={"sub": user.username, "role": role_str})
     return {
         "access_token": access_token,
         "token_type": "bearer",
         "username": user.username,
-        "role": user.role.value
+        "role": role_str
     }
 
 @app.get("/api/auth/me", summary="Get current logged in user")
@@ -117,7 +126,7 @@ async def get_me(current_user: User = Depends(get_current_user)):
     return {
         "id": str(current_user.id),
         "username": current_user.username,
-        "role": current_user.role,
+        "role": get_enum_value(current_user.role),
         "created_at": current_user.created_at
     }
 
@@ -134,7 +143,7 @@ async def list_users(
         {
             "id": str(u.id),
             "username": u.username,
-            "role": u.role,
+            "role": get_enum_value(u.role),
             "is_active": u.is_active,
             "created_at": u.created_at.strftime("%Y-%m-%d %H:%M:%S")
         }
@@ -154,7 +163,7 @@ async def create_user(
     new_user = User(
         username=payload.username,
         hashed_password=get_password_hash(payload.password),
-        role=payload.role,
+        role=get_enum_value(payload.role),
         is_active=True
     )
     db.add(new_user)
@@ -176,7 +185,7 @@ async def update_user(
     if payload.password:
         user.hashed_password = get_password_hash(payload.password)
     if payload.role:
-        user.role = payload.role
+        user.role = get_enum_value(payload.role)
     if payload.is_active is not None:
         user.is_active = payload.is_active
 
@@ -208,7 +217,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
         if not case:
             return
         
-        case.status = CaseStatus.RUNNING
+        case.status = CaseStatus.RUNNING.value
         await db.commit()
 
         discovered_entities_text = []
@@ -428,10 +437,10 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
             # 6. Automated AI Threat Summarization
             summary = await AIAnalyst.generate_dossier_summary(target, target_type, discovered_entities_text)
             case.ai_summary = summary
-            case.status = CaseStatus.COMPLETED
+            case.status = CaseStatus.COMPLETED.value
 
         except Exception as e:
-            case.status = CaseStatus.FAILED
+            case.status = CaseStatus.FAILED.value
             case.notes = f"Pipeline execution failure: {str(e)}"
 
         await db.commit()
@@ -450,8 +459,8 @@ async def create_investigation(
     new_case = Case(
         title=f"Investigation: {payload.target}",
         target_input=payload.target,
-        target_type=TargetType(detected_type) if detected_type in TargetType.__members__ else TargetType.UNKNOWN,
-        status=CaseStatus.PENDING
+        target_type=detected_type if detected_type in TargetType.__members__ else TargetType.UNKNOWN.value,
+        status=CaseStatus.PENDING.value
     )
     db.add(new_case)
     await db.commit()
@@ -489,8 +498,8 @@ async def list_cases(
             "id": str(c.id),
             "title": c.title,
             "target": c.target_input,
-            "type": c.target_type,
-            "status": c.status,
+            "type": get_enum_value(c.target_type),
+            "status": get_enum_value(c.status),
             "created_at": c.created_at.strftime("%Y-%m-%d %H:%M:%S")
         }
         for c in cases
@@ -517,8 +526,8 @@ async def get_case_detail(
         "id": str(case.id),
         "title": case.title,
         "target": case.target_input,
-        "type": case.target_type,
-        "status": case.status,
+        "type": get_enum_value(case.target_type),
+        "status": get_enum_value(case.status),
         "ai_summary": case.ai_summary,
         "notes": case.notes,
         "created_at": case.created_at.strftime("%Y-%m-%d %H:%M:%S"),
