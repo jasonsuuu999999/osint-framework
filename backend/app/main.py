@@ -35,7 +35,7 @@ from app.nlp.ai_analyst import AIAnalyst
 
 app = FastAPI(
     title="OSINT Investigation Platform API",
-    version="1.4.1",
+    version="1.4.2",
     description="Multi-Entity OSINT Automation & Intelligence Visualization Platform"
 )
 
@@ -51,8 +51,6 @@ async def get_db():
     """Async database session dependency."""
     async with AsyncSessionLocal() as session:
         yield session
-
-# ==================== Helper Functions ====================
 
 def get_enum_value(val) -> str:
     """Helper to safely extract string values from both Enums and raw strings."""
@@ -88,7 +86,7 @@ async def on_startup():
             admin_user = User(
                 username="admin",
                 hashed_password=get_password_hash("admin123"),
-                role=UserRole.ADMIN.value,
+                role="ADMIN",
                 is_active=True
             )
             session.add(admin_user)
@@ -135,7 +133,7 @@ async def get_me(current_user: User = Depends(get_current_user)):
 @app.get("/api/users", summary="List all user accounts")
 async def list_users(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_roles([UserRole.ADMIN]))
+    current_user: User = Depends(require_roles([UserRole.ADMIN, "ADMIN"]))
 ):
     result = await db.execute(select(User).order_by(desc(User.created_at)))
     users = result.scalars().all()
@@ -154,7 +152,7 @@ async def list_users(
 async def create_user(
     payload: CreateUserRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_roles([UserRole.ADMIN]))
+    current_user: User = Depends(require_roles([UserRole.ADMIN, "ADMIN"]))
 ):
     result = await db.execute(select(User).where(User.username == payload.username))
     if result.scalar_one_or_none():
@@ -176,7 +174,7 @@ async def update_user(
     user_id: uuid.UUID,
     payload: UpdateUserRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_roles([UserRole.ADMIN]))
+    current_user: User = Depends(require_roles([UserRole.ADMIN, "ADMIN"]))
 ):
     user = await db.get(User, user_id)
     if not user:
@@ -196,7 +194,7 @@ async def update_user(
 async def delete_user(
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_roles([UserRole.ADMIN]))
+    current_user: User = Depends(require_roles([UserRole.ADMIN, "ADMIN"]))
 ):
     user = await db.get(User, user_id)
     if not user:
@@ -217,7 +215,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
         if not case:
             return
         
-        case.status = CaseStatus.RUNNING.value
+        case.status = "RUNNING"
         await db.commit()
 
         discovered_entities_text = []
@@ -437,10 +435,10 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
             # 6. Automated AI Threat Summarization
             summary = await AIAnalyst.generate_dossier_summary(target, target_type, discovered_entities_text)
             case.ai_summary = summary
-            case.status = CaseStatus.COMPLETED.value
+            case.status = "COMPLETED"
 
         except Exception as e:
-            case.status = CaseStatus.FAILED.value
+            case.status = "FAILED"
             case.notes = f"Pipeline execution failure: {str(e)}"
 
         await db.commit()
@@ -452,15 +450,15 @@ async def create_investigation(
     payload: CreateScanRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.ANALYST]))
+    current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.ANALYST, "ADMIN", "ANALYST"]))
 ):
     detected_type = InputNormalizer.identify_type(payload.target)
     
     new_case = Case(
         title=f"Investigation: {payload.target}",
         target_input=payload.target,
-        target_type=detected_type if detected_type in TargetType.__members__ else TargetType.UNKNOWN.value,
-        status=CaseStatus.PENDING.value
+        target_type=detected_type,
+        status="PENDING"
     )
     db.add(new_case)
     await db.commit()
@@ -559,7 +557,7 @@ async def get_case_detail(
 async def delete_case(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_roles([UserRole.ADMIN]))
+    current_user: User = Depends(require_roles([UserRole.ADMIN, "ADMIN"]))
 ):
     case = await db.get(Case, case_id)
     if not case:
