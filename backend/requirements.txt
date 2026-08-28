@@ -21,3 +21,4 @@ python-whois
 dnspython
 httpx
 beautifulsoup4
+sherlock-project
