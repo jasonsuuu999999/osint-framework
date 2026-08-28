@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, or_
+from sqlalchemy import select, desc, or_, delete
 
 # Project Internal Modules
 from app.models.database import (
@@ -35,7 +35,7 @@ from app.nlp.ai_analyst import AIAnalyst
 
 app = FastAPI(
     title="OSINT Investigation Platform API",
-    version="1.4.2",
+    version="1.4.3",
     description="Multi-Entity OSINT Automation & Intelligence Visualization Platform"
 )
 
@@ -562,7 +562,11 @@ async def delete_case(
     case = await db.get(Case, case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found.")
-    await db.delete(case)
+
+    # Explicit SQL execution to bypass ORM async lazy load cascades
+    await db.execute(delete(Entity).where(Entity.case_id == case_id))
+    await db.execute(delete(ScanLog).where(ScanLog.case_id == case_id))
+    await db.execute(delete(Case).where(Case.id == case_id))
     await db.commit()
     return {"message": "Case deleted successfully."}
 

@@ -277,6 +277,31 @@
                     'Authorization': `Bearer ${token.value}`
                 });
 
+                // Safe Fetch Helper to prevent unexpected JSON.parse crashes
+                const safeFetch = async (url, options = {}) => {
+                    const res = await fetch(url, options);
+                    const rawText = await res.text();
+                    
+                    let data;
+                    try {
+                        data = JSON.parse(rawText);
+                    } catch (err) {
+                        if (res.status === 401) {
+                            handleLogout();
+                            throw new Error("Session expired. Please sign in again.");
+                        }
+                        throw new Error(`Server returned status ${res.status}: ${rawText.slice(0, 120)}`);
+                    }
+
+                    if (!res.ok) {
+                        if (res.status === 401) {
+                            handleLogout();
+                        }
+                        throw new Error(data.detail || `Request failed with status ${res.status}`);
+                    }
+                    return data;
+                };
+
                 const handleLogin = async () => {
                     loginError.value = '';
                     try {
@@ -289,7 +314,10 @@
                             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                             body: formData
                         });
-                        const data = await res.json();
+                        const rawText = await res.text();
+                        let data;
+                        try { data = JSON.parse(rawText); } catch { throw new Error(rawText); }
+
                         if (!res.ok) throw new Error(data.detail || 'Invalid username or password.');
 
                         token.value = data.access_token;
@@ -306,19 +334,16 @@
                     token.value = '';
                     localStorage.removeItem('osint_jwt');
                     isAuthenticated.value = false;
+                    currentCase.value = {};
                 };
 
                 const checkAuth = async () => {
                     if (!token.value) return;
                     try {
-                        const res = await fetch('/api/auth/me', { headers: authHeaders() });
-                        if (res.ok) {
-                            userProfile.value = await res.json();
-                            isAuthenticated.value = true;
-                            fetchHistoryCases();
-                        } else {
-                            handleLogout();
-                        }
+                        const data = await safeFetch('/api/auth/me', { headers: authHeaders() });
+                        userProfile.value = data;
+                        isAuthenticated.value = true;
+                        fetchHistoryCases();
                     } catch {
                         handleLogout();
                     }
@@ -327,8 +352,7 @@
                 const fetchHistoryCases = async () => {
                     try {
                         const url = searchQuery.value ? `/api/cases?q=${encodeURIComponent(searchQuery.value)}` : '/api/cases';
-                        const res = await fetch(url, { headers: authHeaders() });
-                        if (res.ok) historyCases.value = await res.json();
+                        historyCases.value = await safeFetch(url, { headers: authHeaders() });
                     } catch (err) {
                         console.error("Failed to load cases:", err);
                     }
@@ -336,28 +360,20 @@
 
                 const loadCase = async (caseId) => {
                     try {
-                        const res = await fetch(`/api/cases/${caseId}`, { headers: authHeaders() });
-                        if (res.ok) {
-                            const data = await res.json();
-                            currentCase.value = data;
-                            updateGraphData(data.target, data.entities);
-                        }
+                        const data = await safeFetch(`/api/cases/${caseId}`, { headers: authHeaders() });
+                        currentCase.value = data;
+                        updateGraphData(data.target, data.entities);
                     } catch (err) {
-                        console.error("Failed to load case details:", err);
+                        alert("Failed to load case: " + err.message);
                     }
                 };
 
                 const deleteCase = async (caseId) => {
                     if (!confirm("Are you sure you want to delete this case?")) return;
                     try {
-                        const res = await fetch(`/api/cases/${caseId}`, { method: 'DELETE', headers: authHeaders() });
-                        if (res.ok) {
-                            if (currentCase.value.id === caseId) currentCase.value = {};
-                            fetchHistoryCases();
-                        } else {
-                            const errData = await res.json();
-                            alert(errData.detail || "Deletion failed due to permissions.");
-                        }
+                        await safeFetch(`/api/cases/${caseId}`, { method: 'DELETE', headers: authHeaders() });
+                        if (currentCase.value.id === caseId) currentCase.value = {};
+                        fetchHistoryCases();
                     } catch (err) {
                         alert("Deletion error: " + err.message);
                     }
@@ -369,48 +385,50 @@
                 };
 
                 const fetchUsers = async () => {
-                    const res = await fetch('/api/users', { headers: authHeaders() });
-                    if (res.ok) usersList.value = await res.json();
+                    try {
+                        usersList.value = await safeFetch('/api/users', { headers: authHeaders() });
+                    } catch (err) {
+                        alert("Failed to load users: " + err.message);
+                    }
                 };
 
                 const createUser = async () => {
                     if (!newUser.value.username || !newUser.value.password) return alert("Please fill all required credentials.");
-                    const res = await fetch('/api/users', {
-                        method: 'POST',
-                        headers: authHeaders(),
-                        body: JSON.stringify(newUser.value)
-                    });
-                    if (res.ok) {
+                    try {
+                        await safeFetch('/api/users', {
+                            method: 'POST',
+                            headers: authHeaders(),
+                            body: JSON.stringify(newUser.value)
+                        });
                         newUser.value = { username: '', password: '', role: 'ANALYST' };
                         fetchUsers();
-                    } else {
-                        const err = await res.json();
-                        alert(err.detail || "Failed to create user.");
+                    } catch (err) {
+                        alert("Create user failed: " + err.message);
                     }
                 };
 
                 const promptResetPassword = async (user) => {
                     const newPwd = prompt(`Enter new password for ${user.username}:`);
                     if (!newPwd) return;
-                    const res = await fetch(`/api/users/${user.id}`, {
-                        method: 'PUT',
-                        headers: authHeaders(),
-                        body: JSON.stringify({ password: newPwd })
-                    });
-                    if (res.ok) alert("Password reset successfully.");
-                    else {
-                        const err = await res.json();
-                        alert(err.detail || "Failed to reset password.");
+                    try {
+                        await safeFetch(`/api/users/${user.id}`, {
+                            method: 'PUT',
+                            headers: authHeaders(),
+                            body: JSON.stringify({ password: newPwd })
+                        });
+                        alert("Password reset successfully.");
+                    } catch (err) {
+                        alert("Password reset failed: " + err.message);
                     }
                 };
 
                 const deleteUser = async (userId) => {
                     if (!confirm("Are you sure you want to delete this user?")) return;
-                    const res = await fetch(`/api/users/${userId}`, { method: 'DELETE', headers: authHeaders() });
-                    if (res.ok) fetchUsers();
-                    else {
-                        const err = await res.json();
-                        alert(err.detail || "Failed to delete user.");
+                    try {
+                        await safeFetch(`/api/users/${userId}`, { method: 'DELETE', headers: authHeaders() });
+                        fetchUsers();
+                    } catch (err) {
+                        alert("Delete user failed: " + err.message);
                     }
                 };
 
@@ -452,22 +470,15 @@
                             tools: mode.value === 'custom' ? selectedTools.value : null
                         };
 
-                        const res = await fetch('/api/investigate', {
+                        const data = await safeFetch('/api/investigate', {
                             method: 'POST',
                             headers: authHeaders(),
                             body: JSON.stringify(payload)
                         });
-                        const data = await res.json();
-
-                        if (!res.ok) {
-                            alert(data.detail || "Investigation launch failed.");
-                            isLoading.value = false;
-                            return;
-                        }
 
                         if (data.case_id) pollCaseStatus(data.case_id);
                     } catch (e) {
-                        alert("Network error: " + e.message);
+                        alert("Investigation failed: " + e.message);
                         isLoading.value = false;
                     }
                 };
@@ -475,8 +486,7 @@
                 const pollCaseStatus = (caseId) => {
                     const timer = setInterval(async () => {
                         try {
-                            const res = await fetch(`/api/cases/${caseId}`, { headers: authHeaders() });
-                            const data = await res.json();
+                            const data = await safeFetch(`/api/cases/${caseId}`, { headers: authHeaders() });
                             currentCase.value = data;
                             if (data.status === 'COMPLETED' || data.status === 'FAILED') {
                                 clearInterval(timer);

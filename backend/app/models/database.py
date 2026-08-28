@@ -46,7 +46,7 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[UserRole] = mapped_column(String(20), default=UserRole.ANALYST, nullable=False)
+    role: Mapped[str] = mapped_column(String(20), default="ANALYST", nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -57,14 +57,22 @@ class Case(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     target_input: Mapped[str] = mapped_column(String(255), nullable=False)
-    target_type: Mapped[TargetType] = mapped_column(String(50), default=TargetType.UNKNOWN)
-    status: Mapped[CaseStatus] = mapped_column(String(50), default=CaseStatus.PENDING)
+    target_type: Mapped[str] = mapped_column(String(50), default="UNKNOWN")
+    status: Mapped[str] = mapped_column(String(50), default="PENDING")
     ai_summary: Mapped[str] = mapped_column(Text, nullable=True)
     notes: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    entities: Mapped[list["Entity"]] = relationship(back_populates="case", cascade="all, delete-orphan")
-    scan_logs: Mapped[list["ScanLog"]] = relationship(back_populates="case", cascade="all, delete-orphan")
+    entities: Mapped[list["Entity"]] = relationship(
+        back_populates="case",
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
+    scan_logs: Mapped[list["ScanLog"]] = relationship(
+        back_populates="case",
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
 
 class Entity(Base):
     """Discovered OSINT entity or asset node for Cytoscape visualization."""
