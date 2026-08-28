@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, or_
 
-# Project modules
+# Project Internal Modules
 from app.models.database import (
     AsyncSessionLocal,
     init_db,
@@ -35,8 +35,8 @@ from app.nlp.ai_analyst import AIAnalyst
 
 app = FastAPI(
     title="OSINT Investigation Platform API",
-    version="1.3.0",
-    description="OSINT Automated Intelligence Gathering and Visualization Platform"
+    version="1.4.0",
+    description="Multi-Entity OSINT Automation & Intelligence Visualization Platform"
 )
 
 app.add_middleware(
@@ -48,6 +48,7 @@ app.add_middleware(
 )
 
 async def get_db():
+    """Async database session dependency."""
     async with AsyncSessionLocal() as session:
         yield session
 
@@ -67,10 +68,11 @@ class UpdateUserRequest(BaseModel):
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
 
-# ==================== System initialization ====================
+# ==================== Startup Events ====================
 
 @app.on_event("startup")
 async def on_startup():
+    """Initializes tables and default admin credential."""
     await init_db()
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(User).where(User.username == "admin"))
@@ -83,11 +85,11 @@ async def on_startup():
             )
             session.add(admin_user)
             await session.commit()
-            print("[*] The default account has been created.：admin / admin123")
+            print("[*] Default admin account seeded: admin / admin123")
 
-# ==================== Authentication and Identity API ====================
+# ==================== Authentication Routes ====================
 
-@app.post("/api/auth/login", summary="Log in to get JWT Token")
+@app.post("/api/auth/login", summary="Login and obtain JWT Token")
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == form_data.username))
     user = result.scalar_one_or_none()
@@ -95,12 +97,12 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Username/Password Error.",
+            detail="Invalid username or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account has been deactivated.")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is disabled.")
 
     access_token = create_access_token(data={"sub": user.username, "role": user.role.value})
     return {
@@ -110,7 +112,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
         "role": user.role.value
     }
 
-@app.get("/api/auth/me", summary="Get information of the currently logged-in user")
+@app.get("/api/auth/me", summary="Get current logged in user")
 async def get_me(current_user: User = Depends(get_current_user)):
     return {
         "id": str(current_user.id),
@@ -119,9 +121,9 @@ async def get_me(current_user: User = Depends(get_current_user)):
         "created_at": current_user.created_at
     }
 
-# ==================== User account management (ADMIN only) ====================
+# ==================== User Management Routes (Admin Only) ====================
 
-@app.get("/api/users", summary="Get a list of all users")
+@app.get("/api/users", summary="List all user accounts")
 async def list_users(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles([UserRole.ADMIN]))
@@ -139,7 +141,7 @@ async def list_users(
         for u in users
     ]
 
-@app.post("/api/users", summary="Create a new user account")
+@app.post("/api/users", summary="Create new user")
 async def create_user(
     payload: CreateUserRequest,
     db: AsyncSession = Depends(get_db),
@@ -147,7 +149,7 @@ async def create_user(
 ):
     result = await db.execute(select(User).where(User.username == payload.username))
     if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="The username already exists.")
+        raise HTTPException(status_code=400, detail="Username already exists.")
 
     new_user = User(
         username=payload.username,
@@ -158,9 +160,9 @@ async def create_user(
     db.add(new_user)
     await db.commit()
     await db.refresh(new_user)
-    return {"message": "User creation successful", "id": str(new_user.id)}
+    return {"message": "User created successfully.", "id": str(new_user.id)}
 
-@app.put("/api/users/{user_id}", summary="Change user password or permission roles")
+@app.put("/api/users/{user_id}", summary="Update user password or role")
 async def update_user(
     user_id: uuid.UUID,
     payload: UpdateUserRequest,
@@ -169,7 +171,7 @@ async def update_user(
 ):
     user = await db.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="The user cannot be found.")
+        raise HTTPException(status_code=404, detail="User not found.")
 
     if payload.password:
         user.hashed_password = get_password_hash(payload.password)
@@ -179,9 +181,9 @@ async def update_user(
         user.is_active = payload.is_active
 
     await db.commit()
-    return {"message": "User data updated successfully"}
+    return {"message": "User updated successfully."}
 
-@app.delete("/api/users/{user_id}", summary="Delete user account")
+@app.delete("/api/users/{user_id}", summary="Delete user")
 async def delete_user(
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -189,17 +191,18 @@ async def delete_user(
 ):
     user = await db.get(User, user_id)
     if not user:
-        raise HTTPException(status_code=404, detail="The user cannot be found.")
+        raise HTTPException(status_code=404, detail="User not found.")
     if user.username == "admin":
-        raise HTTPException(status_code=400, detail="Admin account cannot be deleted")
+        raise HTTPException(status_code=400, detail="Cannot delete root admin account.")
 
     await db.delete(user)
     await db.commit()
-    return {"message": "The user has been successfully deleted."}
+    return {"message": "User deleted successfully."}
 
-# ==================== asynchronous survey ====================
+# ==================== Background Investigation Pipeline ====================
 
 async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target_type: str, selected_tools: Optional[List[str]]):
+    """Orchestrates modular recon CLI execution and entity persistence."""
     async with AsyncSessionLocal() as db:
         case = await db.get(Case, case_id)
         if not case:
@@ -212,120 +215,230 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
         is_tool_enabled = lambda name: selected_tools is None or name in selected_tools
 
         try:
-            # 1. Native detection engine
+            # 1. Native Fallback Engine
             if is_tool_enabled("native_engine"):
                 native_res = await OSINTModules.run_native_recon(target, target_type)
+                db.add(ScanLog(
+                    case_id=case.id,
+                    tool_name="native_engine",
+                    command_executed=native_res["command"],
+                    status="COMPLETED",
+                    stdout_log=native_res["raw_log"],
+                    return_code=native_res["return_code"],
+                    execution_time_sec=native_res["duration"]
+                ))
                 for r in native_res.get("results", []):
-                    ent = Entity(case_id=case.id, category="RECON_ASSET", value=r, source_tool="native_engine")
-                    db.add(ent)
+                    db.add(Entity(case_id=case.id, category="RECON_ASSET", value=r, source_tool="native_engine"))
                     discovered_entities_text.append(r)
 
-            # 2. Name detection module
+            # 2. Identity & Person Tools
             if target_type == "PERSON":
                 expanded = InputNormalizer.expand_person_identity(target)
                 alias = expanded.get("pinyin_continuous") or target
                 
                 if is_tool_enabled("maigret"):
                     m_res = await OSINTModules.run_maigret(alias)
-                    db.add(ScanLog(case_id=case.id, tool_name="maigret", status="COMPLETED", stdout_log=m_res["raw_log"], execution_time_sec=m_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="maigret",
+                        command_executed=m_res["command"],
+                        status="COMPLETED" if m_res["return_code"] == 0 else "FAILED",
+                        stdout_log=m_res["raw_log"],
+                        return_code=m_res["return_code"],
+                        execution_time_sec=m_res["duration"]
+                    ))
                     for a in m_res.get("accounts", []):
                         db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="maigret"))
-                        discovered_entities_text.append(f"Maigret: {a}")
+                        discovered_entities_text.append(f"Maigret Account: {a}")
 
                 if is_tool_enabled("sherlock"):
                     s_res = await OSINTModules.run_sherlock(alias)
-                    db.add(ScanLog(case_id=case.id, tool_name="sherlock", status="COMPLETED", stdout_log=s_res["raw_log"], execution_time_sec=s_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="sherlock",
+                        command_executed=s_res["command"],
+                        status="COMPLETED" if s_res["return_code"] == 0 else "FAILED",
+                        stdout_log=s_res["raw_log"],
+                        return_code=s_res["return_code"],
+                        execution_time_sec=s_res["duration"]
+                    ))
                     for a in s_res.get("accounts", []):
                         db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="sherlock"))
-                        discovered_entities_text.append(f"Sherlock: {a}")
+                        discovered_entities_text.append(f"Sherlock Account: {a}")
 
-            # 3. Email module
+            # 3. Email Tools
             elif target_type == "EMAIL":
                 if is_tool_enabled("holehe"):
                     h_res = await OSINTModules.run_holehe(target)
-                    db.add(ScanLog(case_id=case.id, tool_name="holehe", status="COMPLETED", stdout_log=h_res["raw_log"], execution_time_sec=h_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="holehe",
+                        command_executed=h_res["command"],
+                        status="COMPLETED" if h_res["return_code"] == 0 else "FAILED",
+                        stdout_log=h_res["raw_log"],
+                        return_code=h_res["return_code"],
+                        execution_time_sec=h_res["duration"]
+                    ))
                     for p in h_res.get("platforms", []):
                         db.add(Entity(case_id=case.id, category="SERVICE_REGISTRATION", value=p, source_tool="holehe"))
-                        discovered_entities_text.append(f"註冊平台: {p}")
+                        discovered_entities_text.append(f"Registered Service: {p}")
 
-            # 4. Phone module
+            # 4. Phone Tools
             elif target_type == "PHONE":
                 if is_tool_enabled("phoneinfoga"):
                     p_res = await OSINTModules.run_phoneinfoga(target)
-                    db.add(ScanLog(case_id=case.id, tool_name="phoneinfoga", status="COMPLETED", stdout_log=p_res["raw_log"], execution_time_sec=p_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="phoneinfoga",
+                        command_executed=p_res["command"],
+                        status="COMPLETED" if p_res["return_code"] == 0 else "FAILED",
+                        stdout_log=p_res["raw_log"],
+                        return_code=p_res["return_code"],
+                        execution_time_sec=p_res["duration"]
+                    ))
                     for d in p_res.get("details", []):
                         db.add(Entity(case_id=case.id, category="PHONE_INTEL", value=d, source_tool="phoneinfoga"))
-                        discovered_entities_text.append(f"門號情資: {d}")
+                        discovered_entities_text.append(f"Phone Intel: {d}")
 
-            # 5. Domains, WAF, and Asset Module
+            # 5. Domain, WAF & Infrastructure
             elif target_type == "DOMAIN":
                 if is_tool_enabled("wafw00f"):
                     waf_res = await OSINTModules.run_wafw00f(target)
-                    db.add(ScanLog(case_id=case.id, tool_name="wafw00f", status="COMPLETED", stdout_log=waf_res["raw_log"], execution_time_sec=waf_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="wafw00f",
+                        command_executed=waf_res["command"],
+                        status="COMPLETED" if waf_res["return_code"] == 0 else "FAILED",
+                        stdout_log=waf_res["raw_log"],
+                        return_code=waf_res["return_code"],
+                        execution_time_sec=waf_res["duration"]
+                    ))
                     for w in waf_res.get("wafs", []):
                         db.add(Entity(case_id=case.id, category="WAF_FINGERPRINT", value=w, source_tool="wafw00f"))
-                        discovered_entities_text.append(f"WAF protection: {w}")
+                        discovered_entities_text.append(f"WAF Protection: {w}")
 
                 if is_tool_enabled("httpx"):
                     hx_res = await OSINTModules.run_httpx_probe(target)
-                    db.add(ScanLog(case_id=case.id, tool_name="httpx", status="COMPLETED", stdout_log=hx_res["raw_log"], execution_time_sec=hx_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="httpx",
+                        command_executed=hx_res["command"],
+                        status="COMPLETED" if hx_res["return_code"] == 0 else "FAILED",
+                        stdout_log=hx_res["raw_log"],
+                        return_code=hx_res["return_code"],
+                        execution_time_sec=hx_res["duration"]
+                    ))
                     for h in hx_res.get("results", []):
                         db.add(Entity(case_id=case.id, category="HTTP_PROBE", value=h, source_tool="httpx"))
-                        discovered_entities_text.append(f"HTTP fingerprint: {h}")
+                        discovered_entities_text.append(f"HTTP Probe: {h}")
 
                 if is_tool_enabled("theHarvester"):
                     th_res = await OSINTModules.run_theharvester(target)
-                    db.add(ScanLog(case_id=case.id, tool_name="theHarvester", status="COMPLETED", stdout_log=th_res["raw_log"], execution_time_sec=th_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="theHarvester",
+                        command_executed=th_res["command"],
+                        status="COMPLETED" if th_res["return_code"] == 0 else "FAILED",
+                        stdout_log=th_res["raw_log"],
+                        return_code=th_res["return_code"],
+                        execution_time_sec=th_res["duration"]
+                    ))
+                    for h in th_res.get("hosts", []):
+                        db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=h, source_tool="theHarvester"))
+                        discovered_entities_text.append(f"theHarvester Host: {h}")
+                    for em in th_res.get("emails", []):
+                        db.add(Entity(case_id=case.id, category="EMAIL", value=em, source_tool="theHarvester"))
+                        discovered_entities_text.append(f"theHarvester Email: {em}")
 
                 if is_tool_enabled("amass"):
                     am_res = await OSINTModules.run_amass(target)
-                    db.add(ScanLog(case_id=case.id, tool_name="amass", status="COMPLETED", stdout_log=am_res["raw_log"], execution_time_sec=am_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="amass",
+                        command_executed=am_res["command"],
+                        status="COMPLETED" if am_res["return_code"] == 0 else "FAILED",
+                        stdout_log=am_res["raw_log"],
+                        return_code=am_res["return_code"],
+                        execution_time_sec=am_res["duration"]
+                    ))
                     for sub in am_res.get("subdomains", []):
                         db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=sub, source_tool="amass"))
-                        discovered_entities_text.append(f"Amass subdomain: {sub}")
+                        discovered_entities_text.append(f"Amass Subdomain: {sub}")
 
                 if is_tool_enabled("sublist3r"):
                     sub_res = await OSINTModules.run_sublist3r(target)
-                    db.add(ScanLog(case_id=case.id, tool_name="sublist3r", status="COMPLETED", stdout_log=sub_res["raw_log"], execution_time_sec=sub_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="sublist3r",
+                        command_executed=sub_res["command"],
+                        status="COMPLETED" if sub_res["return_code"] == 0 else "FAILED",
+                        stdout_log=sub_res["raw_log"],
+                        return_code=sub_res["return_code"],
+                        execution_time_sec=sub_res["duration"]
+                    ))
                     for sub in sub_res.get("subdomains", []):
                         db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=sub, source_tool="sublist3r"))
-                        discovered_entities_text.append(f"Sublist3r: {sub}")
+                        discovered_entities_text.append(f"Sublist3r Subdomain: {sub}")
 
                 if is_tool_enabled("dnsrecon"):
                     dns_res = await OSINTModules.run_dnsrecon(target)
-                    db.add(ScanLog(case_id=case.id, tool_name="dnsrecon", status="COMPLETED", stdout_log=dns_res["raw_log"], execution_time_sec=dns_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="dnsrecon",
+                        command_executed=dns_res["command"],
+                        status="COMPLETED" if dns_res["return_code"] == 0 else "FAILED",
+                        stdout_log=dns_res["raw_log"],
+                        return_code=dns_res["return_code"],
+                        execution_time_sec=dns_res["duration"]
+                    ))
                     for rec in dns_res.get("records", []):
                         db.add(Entity(case_id=case.id, category="DNS_RECORD", value=rec, source_tool="dnsrecon"))
                         discovered_entities_text.append(rec)
 
                 if is_tool_enabled("whatweb"):
                     ww_res = await OSINTModules.run_whatweb(target)
-                    db.add(ScanLog(case_id=case.id, tool_name="whatweb", status="COMPLETED", stdout_log=ww_res["raw_log"], execution_time_sec=ww_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="whatweb",
+                        command_executed=ww_res["command"],
+                        status="COMPLETED" if ww_res["return_code"] == 0 else "FAILED",
+                        stdout_log=ww_res["raw_log"],
+                        return_code=ww_res["return_code"],
+                        execution_time_sec=ww_res["duration"]
+                    ))
                     for t in ww_res.get("tech_stack", []):
                         db.add(Entity(case_id=case.id, category="TECH_STACK", value=t, source_tool="whatweb"))
-                        discovered_entities_text.append(f"Website tech: {t}")
+                        discovered_entities_text.append(f"Web Tech Stack: {t}")
 
                 if is_tool_enabled("nmap"):
                     nmap_res = await OSINTModules.run_nmap_quick(target)
-                    db.add(ScanLog(case_id=case.id, tool_name="nmap", status="COMPLETED", stdout_log=nmap_res["raw_log"], execution_time_sec=nmap_res["duration"]))
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="nmap",
+                        command_executed=nmap_res["command"],
+                        status="COMPLETED" if nmap_res["return_code"] == 0 else "FAILED",
+                        stdout_log=nmap_res["raw_log"],
+                        return_code=nmap_res["return_code"],
+                        execution_time_sec=nmap_res["duration"]
+                    ))
                     for p in nmap_res.get("open_ports", []):
                         db.add(Entity(case_id=case.id, category="OPEN_PORT", value=p, source_tool="nmap"))
-                        discovered_entities_text.append(f"Open port: {p}")
+                        discovered_entities_text.append(f"Open Port: {p}")
 
-            # 6. AI Summary
+            # 6. Automated AI Threat Summarization
             summary = await AIAnalyst.generate_dossier_summary(target, target_type, discovered_entities_text)
             case.ai_summary = summary
             case.status = CaseStatus.COMPLETED
 
         except Exception as e:
             case.status = CaseStatus.FAILED
-            case.notes = f"Production malfunction: {str(e)}"
+            case.notes = f"Pipeline execution failure: {str(e)}"
 
         await db.commit()
 
-# ==================== Survey Management API ====================
+# ==================== Investigation API Routes ====================
 
-@app.post("/api/investigate", summary="Establish and launch intelligence investigation mission")
+@app.post("/api/investigate", summary="Create and launch an OSINT investigation")
 async def create_investigation(
     payload: CreateScanRequest,
     background_tasks: BackgroundTasks,
@@ -359,9 +472,9 @@ async def create_investigation(
         "status": "QUEUED"
     }
 
-@app.get("/api/cases", summary="Obtain/Search Investigation Case List")
+@app.get("/api/cases", summary="Search and list investigation cases")
 async def list_cases(
-    q: Optional[str] = Query(None, description="Search target or keywords"),
+    q: Optional[str] = Query(None, description="Search query string"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -383,7 +496,7 @@ async def list_cases(
         for c in cases
     ]
 
-@app.get("/api/cases/{case_id}", summary="Obtain details of the investigated case and physical nodes")
+@app.get("/api/cases/{case_id}", summary="Get detailed case information, entities, and logs")
 async def get_case_detail(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -392,7 +505,7 @@ async def get_case_detail(
     result = await db.execute(select(Case).where(Case.id == case_id))
     case = result.scalar_one_or_none()
     if not case:
-        raise HTTPException(status_code=404, detail="The specified investigation case could not be found.")
+        raise HTTPException(status_code=404, detail="Case not found.")
 
     entities_res = await db.execute(select(Entity).where(Entity.case_id == case_id))
     entities = entities_res.scalars().all()
@@ -422,15 +535,18 @@ async def get_case_detail(
         "logs": [
             {
                 "tool": l.tool_name,
+                "command": l.command_executed or "N/A",
                 "status": l.status,
+                "return_code": l.return_code,
                 "duration": l.execution_time_sec,
+                "raw_log": l.stdout_log or "No terminal output recorded.",
                 "created_at": l.created_at.strftime("%Y-%m-%d %H:%M:%S")
             }
             for l in logs
         ]
     }
 
-@app.delete("/api/cases/{case_id}", summary="Delete specific cases (限 ADMIN)")
+@app.delete("/api/cases/{case_id}", summary="Delete case (Admin only)")
 async def delete_case(
     case_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -438,12 +554,12 @@ async def delete_case(
 ):
     case = await db.get(Case, case_id)
     if not case:
-        raise HTTPException(status_code=404, detail="The case could not be found.")
+        raise HTTPException(status_code=404, detail="Case not found.")
     await db.delete(case)
     await db.commit()
-    return {"message": "The case has been successfully deleted."}
+    return {"message": "Case deleted successfully."}
 
-# ==================== Front-end static page mounting ====================
+# ==================== Frontend Static Hosting ====================
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 frontend_dir = os.path.join(BASE_DIR, "frontend")
@@ -456,4 +572,4 @@ if os.path.exists(frontend_dir):
         index_file = os.path.join(frontend_dir, "index.html")
         if os.path.exists(index_file):
             return FileResponse(index_file)
-        return {"message": "frontend/index.html Not yet established"}
+        return {"message": "frontend/index.html not found."}

@@ -55,13 +55,3 @@ cd osint-framework
 chmod +x scripts/setup.sh
 ./scripts/setup.sh
 
-Activate System
-source venv/bin/activate
-1.Execute
-PYTHONPATH=backend python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-or
-2.Execute in the background
-nohup env PYTHONPATH=backend python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > osint_server.log 2>&1 &
-
-http://localhost:8000，Default Username/Password：admin/admin123
-
