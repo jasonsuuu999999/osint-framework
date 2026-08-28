@@ -36,7 +36,7 @@ from app.nlp.ai_analyst import AIAnalyst
 
 app = FastAPI(
     title="OSINT Investigation Platform API",
-    version="1.4.4",
+    version="1.4.5",
     description="Multi-Entity OSINT Automation & Intelligence Visualization Platform"
 )
 
@@ -58,6 +58,20 @@ def get_enum_value(val) -> str:
     if val is None:
         return ""
     return val.value if hasattr(val, "value") else str(val)
+
+def cast_target_type(val: str) -> TargetType:
+    """Safely converts string to TargetType Enum."""
+    try:
+        return TargetType(val)
+    except Exception:
+        return TargetType.UNKNOWN
+
+def cast_user_role(val: str) -> UserRole:
+    """Safely converts string to UserRole Enum."""
+    try:
+        return UserRole(val)
+    except Exception:
+        return UserRole.ANALYST
 
 # ==================== Pydantic Schemas ====================
 
@@ -85,9 +99,10 @@ async def on_startup():
         result = await session.execute(select(User).where(User.username == "admin"))
         if not result.scalar_one_or_none():
             admin_user = User(
+                id=uuid.uuid4(),
                 username="admin",
                 hashed_password=get_password_hash("admin123"),
-                role="ADMIN",
+                role=UserRole.ADMIN,
                 is_active=True
             )
             session.add(admin_user)
@@ -163,7 +178,7 @@ async def create_user(
         id=uuid.uuid4(),
         username=payload.username,
         hashed_password=get_password_hash(payload.password),
-        role=get_enum_value(payload.role),
+        role=cast_user_role(get_enum_value(payload.role)),
         is_active=True
     )
     db.add(new_user)
@@ -184,7 +199,7 @@ async def update_user(
     if payload.password:
         user.hashed_password = get_password_hash(payload.password)
     if payload.role:
-        user.role = get_enum_value(payload.role)
+        user.role = cast_user_role(get_enum_value(payload.role))
     if payload.is_active is not None:
         user.is_active = payload.is_active
 
@@ -216,7 +231,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
         if not case:
             return
         
-        case.status = "RUNNING"
+        case.status = CaseStatus.RUNNING
         await db.commit()
 
         discovered_entities_text = []
@@ -436,10 +451,10 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
             # 6. Automated AI Threat Summarization
             summary = await AIAnalyst.generate_dossier_summary(target, target_type, discovered_entities_text)
             case.ai_summary = summary
-            case.status = "COMPLETED"
+            case.status = CaseStatus.COMPLETED
 
         except Exception as e:
-            case.status = "FAILED"
+            case.status = CaseStatus.FAILED
             case.notes = f"Pipeline execution failure: {str(e)}"
 
         await db.commit()
@@ -454,15 +469,16 @@ async def create_investigation(
     current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.ANALYST, "ADMIN", "ANALYST"]))
 ):
     try:
-        detected_type = InputNormalizer.identify_type(payload.target)
+        detected_type_str = InputNormalizer.identify_type(payload.target)
+        enum_target_type = cast_target_type(detected_type_str)
         case_id = uuid.uuid4()
         
         new_case = Case(
             id=case_id,
             title=f"Investigation: {payload.target}",
             target_input=payload.target,
-            target_type=detected_type,
-            status="PENDING"
+            target_type=enum_target_type,
+            status=CaseStatus.PENDING
         )
         db.add(new_case)
         await db.commit()
@@ -471,14 +487,14 @@ async def create_investigation(
             execute_investigation_pipeline,
             case_id,
             payload.target,
-            detected_type,
+            detected_type_str,
             payload.tools
         )
 
         return {
             "case_id": str(case_id),
             "target": payload.target,
-            "detected_type": detected_type,
+            "detected_type": detected_type_str,
             "status": "QUEUED"
         }
     except Exception as e:

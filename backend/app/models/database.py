@@ -5,7 +5,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy import String, DateTime, ForeignKey, Text, Float, Integer
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID, JSONB, ENUM as PG_ENUM
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -39,6 +39,28 @@ class UserRole(str, Enum):
     ANALYST = "ANALYST"
     VIEWER = "VIEWER"
 
+# PostgreSQL Enum type definitions matching existing DB schemas
+TargetTypeEnum = PG_ENUM(
+    TargetType,
+    name="targettype",
+    create_type=False,
+    values_callable=lambda obj: [e.value for e in obj]
+)
+
+CaseStatusEnum = PG_ENUM(
+    CaseStatus,
+    name="casestatus",
+    create_type=False,
+    values_callable=lambda obj: [e.value for e in obj]
+)
+
+UserRoleEnum = PG_ENUM(
+    UserRole,
+    name="userrole",
+    create_type=False,
+    values_callable=lambda obj: [e.value for e in obj]
+)
+
 class User(Base):
     """User account model for authentication and RBAC."""
     __tablename__ = "users"
@@ -46,7 +68,7 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(String(20), default="ANALYST", nullable=False)
+    role: Mapped[UserRole] = mapped_column(UserRoleEnum, default=UserRole.ANALYST, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -57,8 +79,8 @@ class Case(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     target_input: Mapped[str] = mapped_column(String(255), nullable=False)
-    target_type: Mapped[str] = mapped_column(String(50), default="UNKNOWN")
-    status: Mapped[str] = mapped_column(String(50), default="PENDING")
+    target_type: Mapped[TargetType] = mapped_column(TargetTypeEnum, default=TargetType.UNKNOWN)
+    status: Mapped[CaseStatus] = mapped_column(CaseStatusEnum, default=CaseStatus.PENDING)
     ai_summary: Mapped[str] = mapped_column(Text, nullable=True)
     notes: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
