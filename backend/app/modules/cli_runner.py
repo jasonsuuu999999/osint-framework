@@ -16,7 +16,7 @@ class SafeToolRunner:
         start_time = time.time()
         exec_path = shutil.which(cmd_args[0])
         if not exec_path:
-            return -1, f"TOOL_NOT_FOUND: 指令 '{cmd_args[0]}' 未安裝在系統 PATH 中。", 0.0
+            return -1, f"TOOL_NOT_FOUND: Cmd '{cmd_args[0]}' not installed in the system PATH. ", 0.0
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -28,13 +28,13 @@ class SafeToolRunner:
             exec_time = round(time.time() - start_time, 2)
             return process.returncode, stdout.decode('utf-8', errors='replace'), exec_time
         except asyncio.TimeoutError:
-            return -1, f"TIMEOUT: 工具執行超過 {timeout} 秒已自動終止。", timeout
+            return -1, f"TIMEOUT: The tool has automatically terminated after running for more than {timeout} seconds. ", timeout
         except Exception as e:
             return -1, f"ERROR: {str(e)}", 0.0
 
 class OSINTModules:
 
-    # ==================== 1. 人名 / 帳號社群模組 ====================
+    # ================= 1. Name / Account Community Module =================
     @staticmethod
     async def run_maigret(username: str) -> Dict[str, Any]:
         cmd = ["maigret", username, "--timeout", "10", "--no-color"]
@@ -58,7 +58,7 @@ class OSINTModules:
                 found_accounts.extend(urls)
         return {"tool": "sherlock", "return_code": code, "duration": duration, "raw_log": out, "accounts": list(set(found_accounts))}
 
-    # ==================== 2. 電子郵件模組 ====================
+    # ==================== 2. Email Module ====================
     @staticmethod
     async def run_holehe(email: str) -> Dict[str, Any]:
         cmd = ["holehe", email, "--only-used", "--no-color"]
@@ -71,7 +71,7 @@ class OSINTModules:
                     discovered_platforms.append(platform)
         return {"tool": "holehe", "return_code": code, "duration": duration, "raw_log": out, "platforms": list(set(discovered_platforms))}
 
-    # ==================== 3. 電話號碼模組 ====================
+    # ==================== 3. Phone Module ====================
     @staticmethod
     async def run_phoneinfoga(phone_number: str) -> Dict[str, Any]:
         cmd = ["phoneinfoga", "scan", "-n", phone_number]
@@ -82,17 +82,17 @@ class OSINTModules:
             if phonenumbers.is_valid_number(parsed):
                 country = geocoder.description_for_number(parsed, "zh-TW")
                 operator = carrier.name_for_number(parsed, "zh-TW")
-                if country: details.append(f"地理區域: {country}")
-                if operator: details.append(f"電信業者: {operator}")
-                details.append(f"國際標準格式: {phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)}")
+                if country: details.append(f"Geographic Region: {country}")
+                if operator: details.append(f"Telecom Operator: {operator}")
+                details.append(f"International Standard Format: {phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)}")
         except Exception:
             pass
         return {"tool": "phoneinfoga", "return_code": code, "duration": duration, "raw_log": out, "details": details}
 
-    # ==================== 4. 網域、WAF、HTTP 探測與資產模組 ====================
+    # ==================== 4. Domain, WAF, HTTP detection and asset module ====================
     @staticmethod
     async def run_wafw00f(domain: str) -> Dict[str, Any]:
-        """探測網站後端所屬 WAF 防護 (Cloudflare, AWS WAF 等)"""
+        """Detect the WAF protection"""
         cmd = ["wafw00f", domain]
         code, out, duration = await SafeToolRunner.run_command(cmd, timeout=60)
         wafs = []
@@ -103,7 +103,7 @@ class OSINTModules:
 
     @staticmethod
     async def run_httpx_probe(domain: str) -> Dict[str, Any]:
-        """HTTP 指紋探測 (優先使用 httpx / httpx-toolkit CLI，無則原生 fallback)"""
+        """HTTP fingerprinting"""
         exec_name = "httpx" if shutil.which("httpx") else ("httpx-toolkit" if shutil.which("httpx-toolkit") else None)
         http_results = []
         
@@ -115,7 +115,7 @@ class OSINTModules:
                     http_results.append(line.strip())
             return {"tool": "httpx", "return_code": code, "duration": duration, "raw_log": out, "results": http_results}
         else:
-            # 原生 Python HTTP 探測 fallback
+            # Native Python HTTP detection fallback
             start = time.time()
             raw_log = ""
             for scheme in ["https", "http"]:
@@ -130,7 +130,7 @@ class OSINTModules:
                         raw_log += f"{res_str}\n"
                         break
                 except Exception as e:
-                    raw_log += f"[{scheme.upper()}] 連線失敗: {str(e)}\n"
+                    raw_log += f"[{scheme.upper()}] Connection failed: {str(e)}\n"
             return {"tool": "httpx", "return_code": 0, "duration": round(time.time() - start, 2), "raw_log": raw_log, "results": http_results}
 
     @staticmethod
@@ -192,7 +192,7 @@ class OSINTModules:
                 open_ports.append(line.strip())
         return {"tool": "nmap", "return_code": code, "duration": duration, "raw_log": out, "open_ports": open_ports}
 
-    # ==================== 5. 原生保底高速探測引擎 ====================
+    # ==================== 5. Native detection engine ====================
     @staticmethod
     async def run_native_recon(target: str, target_type: str) -> Dict[str, Any]:
         start_time = time.time()
@@ -207,7 +207,7 @@ class OSINTModules:
                             name = item.get("name_value", "").strip().replace("*.", "")
                             for sub in name.split("\n"):
                                 if sub and sub not in results:
-                                    results.append(f"子網域(crt.sh): {sub}")
+                                    results.append(f"Sundomain(crt.sh): {sub}")
             except Exception:
                 pass
 
@@ -221,10 +221,10 @@ class OSINTModules:
 
             try:
                 w = whois.whois(target)
-                if w.registrar: results.append(f"註冊商: {w.registrar}")
+                if w.registrar: results.append(f"Registrar: {w.registrar}")
                 if w.creation_date:
                     d = w.creation_date[0] if isinstance(w.creation_date, list) else w.creation_date
-                    results.append(f"創立時間: {str(d).split()[0]}")
+                    results.append(f"Creation Time: {str(d).split()[0]}")
             except Exception:
                 pass
 
@@ -241,7 +241,7 @@ class OSINTModules:
                     try:
                         resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
                         if resp.status_code == 200:
-                            results.append(f"社群足跡: {name} ({url})")
+                            results.append(f"Community Footprint: {name} ({url})")
                     except Exception:
                         continue
 

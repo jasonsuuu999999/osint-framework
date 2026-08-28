@@ -33,7 +33,7 @@ class CaseStatus(str, Enum):
     FAILED = "FAILED"
 
 class Case(Base):
-    """調查案件/目標主體"""
+    """Investigation Case/Target Entity"""
     __tablename__ = "cases"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -50,7 +50,7 @@ class Case(Base):
     scan_logs: Mapped[List["ScanLog"]] = relationship("ScanLog", back_populates="case", cascade="all, delete-orphan")
 
 class Entity(Base):
-    """識別到的情報節點 (節點)"""
+    """Identified nodes(nodes)"""
     __tablename__ = "entities"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -64,7 +64,7 @@ class Entity(Base):
     case: Mapped["Case"] = relationship("Case", back_populates="entities")
 
 class Relation(Base):
-    """實體間的關聯 (邊 - 用於圖譜繪製)"""
+    """Relationships between entities (edges - used for graph drawing)"""
     __tablename__ = "relations"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -79,7 +79,7 @@ class Relation(Base):
     case: Mapped["Case"] = relationship("Case", back_populates="relations")
 
 class ScanLog(Base):
-    """工具執行記錄日誌"""
+    """Execution log"""
     __tablename__ = "scan_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -93,12 +93,12 @@ class ScanLog(Base):
     case: Mapped["Case"] = relationship("Case", back_populates="scan_logs")
 
 class UserRole(str, Enum):
-    ADMIN = "ADMIN"        # 完整權限：管理使用者、刪除案件、執行所有工具
-    ANALYST = "ANALYST"    # 分析師：建立案件、執行工具、查看報告
-    VIEWER = "VIEWER"      # 檢視者：僅能瀏覽已完成的情報
+    ADMIN = "ADMIN"        # Manage users, delete cases, execute all tools
+    ANALYST = "ANALYST"    # Create cases, execute tools, view reports
+    VIEWER = "VIEWER"      # Can only view completed intelligence
 
 class User(Base):
-    """系統使用者與權限模型"""
+    """System User and Permission Model"""
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

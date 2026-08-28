@@ -15,30 +15,30 @@ class AIAnalyst:
         o_key = os.getenv("OPENAI_API_KEY", "").strip()
 
         if not g_key and not o_key:
-            return "⚠️ 未配置 GEMINI_API_KEY 或 OPENAI_API_KEY，請至 backend/.env 設定。"
+            return "⚠️ API_KEY is not configured, please configure it in backend/.env."
 
-        data_text = "\n".join(entities_summary) if entities_summary else "未探測到額外關聯實體"
+        data_text = "\n".join(entities_summary) if entities_summary else "No additional associated entities were detected."
 
         prompt = f"""
-你是一名資深的 OSINT 情報分析專家。以下是針對目標「{target}」（類型：{target_type}）由多項 Kali/開源工具探測到的情報數據：
+You are a senior OSINT intelligence analyst.The following is intelligence data detected by multiple Kali/open-source tools targeting.Target： {target} ,Type：{target_type} ：
 
 {data_text}
 
-請根據以上數據，使用繁體中文提供一份結構化的情報調查報告：
-1. 【目標概況與足跡研判】：主要活動領域、資產廣度與風險評估。
-2. 【關鍵關聯實體】：分析人名、網域、社群、郵箱之間的關聯度。
-3. 【誤報過濾建議】：同名同姓或泛用資產過濾提示。
-4. 【下一步深挖建議】：後續切入點與調查建議。
+Please provide a structured intelligence investigation report in Traditional Chinese based on the above data:
+1. [Target Overview and Footprint Analysis]: Main activity areas, asset breadth and risk assessment.
+2. [Key associated entities]: Analyze the correlation between people’s names, domains, communities, and emails.
+3. [False positive filtering suggestions]: filtering suggestions for people with the same name or surname or general assets.
+4. [Suggestions for further digging]: Follow-up entry points and investigation suggestions.
 """
         error_details = []
 
-        # 1. 優先使用 Google Gemini (適配最新模型)
+        # 1. Google Gemini (compatible with the latest models).
         if g_key:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=g_key)
 
-                # 最新主流模型清單優先嘗試
+                # Try the latest mainstream models first
                 candidate_models = [
                     "gemini-3.6-flash",
                     "gemini-3.6-pro",
@@ -47,23 +47,23 @@ class AIAnalyst:
                     "gemini-1.5-flash"
                 ]
 
-                # 動態獲取帳號支援的所有模型
+                # Dynamically retrieve all models supported by the account
                 available_models = []
                 try:
                     for m in genai.list_models():
                         if 'generateContent' in m.supported_generation_methods:
-                            # 移除 'models/' 前綴以利統一比對
+                            # Remove 'models/' prefix to facilitate consistent comparison
                             clean_name = m.name.replace("models/", "")
                             available_models.append(clean_name)
                 except Exception as list_err:
-                    error_details.append(f"ListModels 查詢略過: {str(list_err)}")
+                    error_details.append(f"ListModels Query Skip: {str(list_err)}")
 
-                # 建立嘗試順序：優先候選 -> 動態清單中的其他模型
+                # Establish order: priority candidate -> other models in the dynamic inventory
                 models_to_run = [m for m in candidate_models if m in available_models]
                 if not models_to_run:
                     models_to_run = candidate_models + available_models
 
-                # 執行生成
+                # Execution generation
                 for model_name in models_to_run:
                     try:
                         model = genai.GenerativeModel(model_name)
@@ -75,9 +75,9 @@ class AIAnalyst:
                         continue
 
             except Exception as ge:
-                error_details.append(f"Gemini 初始化異常: {str(ge)}")
+                error_details.append(f"Gemini Initialization exception: {str(ge)}")
 
-        # 2. 備援使用 OpenAI
+        # 2. Backup using OpenAI
         if o_key:
             try:
                 from openai import AsyncOpenAI
@@ -85,7 +85,7 @@ class AIAnalyst:
                 completion = await client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "你是一名資深 OSINT 情報分析師。"},
+                        {"role": "system", "content": "You are a senior OSINT intelligence analyst."},
                         {"role": "user", "content": prompt}
                     ]
                 )
@@ -93,4 +93,4 @@ class AIAnalyst:
             except Exception as oe:
                 error_details.append(f"OpenAI: {str(oe)}")
 
-        return f"⚠️ AI 服務呼叫失敗。詳細除錯資訊：\n" + "\n".join(error_details)
+        return f"⚠️ AI service call failed. Detailed debugging information：\n" + "\n".join(error_details)

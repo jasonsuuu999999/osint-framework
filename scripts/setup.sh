@@ -13,33 +13,33 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo -e "${BLUE}====================================================${NC}"
-echo -e "${BLUE}    🚀 OSINT Platform 環境一鍵安裝與初始化腳本       ${NC}"
+echo -e "${BLUE}    🚀 OSINT Platform One-Click Installation and Initialization Script       ${NC}"
 echo -e "${BLUE}====================================================${NC}"
 
-# 1. 檢查 root / sudo 權限
+# 1. Check root / sudo Permissions
 if [ "$EUID" -ne 0 ]; then
     SUDO="sudo"
     if ! command -v sudo &> /dev/null; then
-        echo -e "${RED}[-] 請以 root 權限執行此腳本，或確認系統已安裝 sudo。${NC}"
+        echo -e "${RED}[-] Please execute this script with root privileges, or ensure that sudo is installed on your system.${NC}"
         exit 1
     fi
 else
     SUDO=""
 fi
 
-# 2. 識別 Linux 發行版
+# 2. Identifying Linux Version
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     OS_ID=${ID:-unknown}
 else
-    echo -e "${RED}[-] 無法識別當前作業系統發行版。${NC}"
+    echo -e "${RED}[-] Unable to identify the current operating system version. ${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}[*] 偵測到作業系統: ${OS_ID}${NC}"
+echo -e "${GREEN}[*] Detected operating system: ${OS_ID}${NC}"
 
-# 3. 更新套件清單並安裝核心系統依賴
-echo -e "${YELLOW}[*] 正在更新系統套件並安裝相依項目...${NC}"
+# 3. Update the package list and install core system dependencies.
+echo -e "${YELLOW}[*] Updating system packages and installing dependent projects...${NC}"
 $SUDO apt-get update -y
 $SUDO apt-get install -y --no-install-recommends \
     python3 \
@@ -59,8 +59,8 @@ $SUDO apt-get install -y --no-install-recommends \
     nmap \
     whatweb
 
-# 4. 安裝額外 Kali 工具與字典庫
-echo -e "${YELLOW}[*] 正在安裝擴充資安與 OSINT 工具集 (SecLists, theHarvester, amass, sublist3r)...${NC}"
+# 4. Install additional Kali tools and dictionaries
+echo -e "${YELLOW}[*] Installing extended security and OSINT toolsets(SecLists, theHarvester, amass, sublist3r)...${NC}"
 if [ "$OS_ID" = "kali" ]; then
     $SUDO apt-get install -y \
         theharvester \
@@ -74,32 +74,32 @@ else
     $SUDO apt-get install -y theharvester dnsrecon sublist3r || true
 fi
 
-# 5. 建立專用 Python 虛擬環境
+# 5. Create Python virtual environment
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV_DIR="$PROJECT_ROOT/venv"
 
 if [ ! -d "$VENV_DIR" ]; then
-    echo -e "${YELLOW}[*] 正在建立 Python 虛擬環境: ${VENV_DIR}...${NC}"
+    echo -e "${YELLOW}[*] Setting up Python virtual environment: ${VENV_DIR}...${NC}"
     python3 -m venv "$VENV_DIR"
 else
-    echo -e "${GREEN}[*] 偵測到現有的虛擬環境，跳過建立。${NC}"
+    echo -e "${GREEN}[*] An existing virtual environment was detected; the creation process was skipped. ${NC}"
 fi
 
 source "$VENV_DIR/bin/activate"
 pip install --upgrade pip setuptools wheel
 
-# 6. 安裝專案 requirements.txt
+# 6. Install requirements.txt
 if [ -f "$PROJECT_ROOT/backend/requirements.txt" ]; then
-    echo -e "${YELLOW}[*] 正在安裝後端相依套件 (requirements.txt)...${NC}"
+    echo -e "${YELLOW}[*] Installing backend dependency packages (requirements.txt)...${NC}"
     pip install -r "$PROJECT_ROOT/backend/requirements.txt"
 fi
 
-# 7. 安裝第三方開源 CLI 工具
-echo -e "${YELLOW}[*] 正在安裝/更新 Maigret, Holehe, Sherlock...${NC}"
+# 7. Install third-party open-source CLI tools
+echo -e "${YELLOW}[*] Installing/updating Maigret, Holehe, Sherlock...${NC}"
 pip install --upgrade maigret holehe sherlock-project || true
 
-# 8. 配置本地 PostgreSQL 資料庫
-echo -e "${YELLOW}[*] 正在配置本地 PostgreSQL 資料庫...${NC}"
+# 8. Configure a local PostgreSQL database
+echo -e "${YELLOW}[*] Configuring the local PostgreSQL database...${NC}"
 $SUDO service postgresql start || true
 
 $SUDO -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename = 'osint_user'" | grep -q 1 || \
@@ -110,7 +110,7 @@ $SUDO -u postgres psql -c "CREATE DATABASE osint_db OWNER osint_user;"
 
 $SUDO -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE osint_db TO osint_user;"
 
-# 9. 檢查並產生 .env
+# 9. Check and generate .env
 ENV_FILE="$PROJECT_ROOT/backend/.env"
 ENV_EXAMPLE="$PROJECT_ROOT/backend/.env.example"
 
@@ -128,12 +128,12 @@ GEMINI_API_KEY=
 OPENAI_API_KEY=
 EOF
     fi
-    echo -e "${GREEN}[+] 已初始化 backend/.env${NC}"
+    echo -e "${GREEN}[+] backend/.env has been initialized. ${NC}"
 fi
 
 echo -e "${GREEN}====================================================${NC}"
-echo -e "${GREEN}    ✅ OSINT Platform 安裝完成！                     ${NC}"
+echo -e "${GREEN}    ✅ OSINT Platform installation complete！                     ${NC}"
 echo -e "${GREEN}====================================================${NC}"
-echo -e "啟動指令："
+echo -e "Startup cmd："
 echo -e "  1. source venv/bin/activate"
 echo -e "  2. PYTHONPATH=backend python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
