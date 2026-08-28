@@ -1,5 +1,6 @@
 import os
 import uuid
+import traceback
 from typing import List, Optional
 from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,7 +36,7 @@ from app.nlp.ai_analyst import AIAnalyst
 
 app = FastAPI(
     title="OSINT Investigation Platform API",
-    version="1.4.3",
+    version="1.4.4",
     description="Multi-Entity OSINT Automation & Intelligence Visualization Platform"
 )
 
@@ -159,6 +160,7 @@ async def create_user(
         raise HTTPException(status_code=400, detail="Username already exists.")
 
     new_user = User(
+        id=uuid.uuid4(),
         username=payload.username,
         hashed_password=get_password_hash(payload.password),
         role=get_enum_value(payload.role),
@@ -166,7 +168,6 @@ async def create_user(
     )
     db.add(new_user)
     await db.commit()
-    await db.refresh(new_user)
     return {"message": "User created successfully.", "id": str(new_user.id)}
 
 @app.put("/api/users/{user_id}", summary="Update user password or role")
@@ -452,32 +453,41 @@ async def create_investigation(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_roles([UserRole.ADMIN, UserRole.ANALYST, "ADMIN", "ANALYST"]))
 ):
-    detected_type = InputNormalizer.identify_type(payload.target)
-    
-    new_case = Case(
-        title=f"Investigation: {payload.target}",
-        target_input=payload.target,
-        target_type=detected_type,
-        status="PENDING"
-    )
-    db.add(new_case)
-    await db.commit()
-    await db.refresh(new_case)
+    try:
+        detected_type = InputNormalizer.identify_type(payload.target)
+        case_id = uuid.uuid4()
+        
+        new_case = Case(
+            id=case_id,
+            title=f"Investigation: {payload.target}",
+            target_input=payload.target,
+            target_type=detected_type,
+            status="PENDING"
+        )
+        db.add(new_case)
+        await db.commit()
 
-    background_tasks.add_task(
-        execute_investigation_pipeline,
-        new_case.id,
-        payload.target,
-        detected_type,
-        payload.tools
-    )
+        background_tasks.add_task(
+            execute_investigation_pipeline,
+            case_id,
+            payload.target,
+            detected_type,
+            payload.tools
+        )
 
-    return {
-        "case_id": str(new_case.id),
-        "target": payload.target,
-        "detected_type": detected_type,
-        "status": "QUEUED"
-    }
+        return {
+            "case_id": str(case_id),
+            "target": payload.target,
+            "detected_type": detected_type,
+            "status": "QUEUED"
+        }
+    except Exception as e:
+        print("[-] /api/investigate Exception:")
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Investigation creation failed: {str(e)}"
+        )
 
 @app.get("/api/cases", summary="Search and list investigation cases")
 async def list_cases(
