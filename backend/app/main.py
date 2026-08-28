@@ -35,11 +35,10 @@ from app.nlp.ai_analyst import AIAnalyst
 
 app = FastAPI(
     title="OSINT Investigation Platform API",
-    version="1.1.0",
+    version="1.3.0",
     description="多語系多源 OSINT 自動化情報調查與視覺化平台"
 )
 
-# CORS 跨來源設定
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -48,7 +47,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 資料庫 Session 依賴
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
@@ -214,7 +212,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
         is_tool_enabled = lambda name: selected_tools is None or name in selected_tools
 
         try:
-            # 1. 原生高速探測引擎 (保底資料)
+            # 1. 原生高速探測引擎
             if is_tool_enabled("native_engine"):
                 native_res = await OSINTModules.run_native_recon(target, target_type)
                 for r in native_res.get("results", []):
@@ -232,14 +230,14 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                     db.add(ScanLog(case_id=case.id, tool_name="maigret", status="COMPLETED", stdout_log=m_res["raw_log"], execution_time_sec=m_res["duration"]))
                     for a in m_res.get("accounts", []):
                         db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="maigret"))
-                        discovered_entities_text.append(f"Maigret 社群: {a}")
+                        discovered_entities_text.append(f"Maigret: {a}")
 
                 if is_tool_enabled("sherlock"):
                     s_res = await OSINTModules.run_sherlock(alias)
                     db.add(ScanLog(case_id=case.id, tool_name="sherlock", status="COMPLETED", stdout_log=s_res["raw_log"], execution_time_sec=s_res["duration"]))
                     for a in s_res.get("accounts", []):
                         db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="sherlock"))
-                        discovered_entities_text.append(f"Sherlock 社群: {a}")
+                        discovered_entities_text.append(f"Sherlock: {a}")
 
             # 3. 電子郵件模組
             elif target_type == "EMAIL":
@@ -248,7 +246,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                     db.add(ScanLog(case_id=case.id, tool_name="holehe", status="COMPLETED", stdout_log=h_res["raw_log"], execution_time_sec=h_res["duration"]))
                     for p in h_res.get("platforms", []):
                         db.add(Entity(case_id=case.id, category="SERVICE_REGISTRATION", value=p, source_tool="holehe"))
-                        discovered_entities_text.append(f"已註冊平台: {p}")
+                        discovered_entities_text.append(f"註冊平台: {p}")
 
             # 4. 電話號碼模組
             elif target_type == "PHONE":
@@ -259,8 +257,22 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                         db.add(Entity(case_id=case.id, category="PHONE_INTEL", value=d, source_tool="phoneinfoga"))
                         discovered_entities_text.append(f"門號情資: {d}")
 
-            # 5. 網域與資產模組
+            # 5. 網域、WAF 與資產模組
             elif target_type == "DOMAIN":
+                if is_tool_enabled("wafw00f"):
+                    waf_res = await OSINTModules.run_wafw00f(target)
+                    db.add(ScanLog(case_id=case.id, tool_name="wafw00f", status="COMPLETED", stdout_log=waf_res["raw_log"], execution_time_sec=waf_res["duration"]))
+                    for w in waf_res.get("wafs", []):
+                        db.add(Entity(case_id=case.id, category="WAF_FINGERPRINT", value=w, source_tool="wafw00f"))
+                        discovered_entities_text.append(f"WAF 防護: {w}")
+
+                if is_tool_enabled("httpx"):
+                    hx_res = await OSINTModules.run_httpx_probe(target)
+                    db.add(ScanLog(case_id=case.id, tool_name="httpx", status="COMPLETED", stdout_log=hx_res["raw_log"], execution_time_sec=hx_res["duration"]))
+                    for h in hx_res.get("results", []):
+                        db.add(Entity(case_id=case.id, category="HTTP_PROBE", value=h, source_tool="httpx"))
+                        discovered_entities_text.append(f"HTTP 指紋: {h}")
+
                 if is_tool_enabled("theHarvester"):
                     th_res = await OSINTModules.run_theharvester(target)
                     db.add(ScanLog(case_id=case.id, tool_name="theHarvester", status="COMPLETED", stdout_log=th_res["raw_log"], execution_time_sec=th_res["duration"]))
@@ -272,6 +284,13 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                         db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=sub, source_tool="amass"))
                         discovered_entities_text.append(f"Amass 子網域: {sub}")
 
+                if is_tool_enabled("sublist3r"):
+                    sub_res = await OSINTModules.run_sublist3r(target)
+                    db.add(ScanLog(case_id=case.id, tool_name="sublist3r", status="COMPLETED", stdout_log=sub_res["raw_log"], execution_time_sec=sub_res["duration"]))
+                    for sub in sub_res.get("subdomains", []):
+                        db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=sub, source_tool="sublist3r"))
+                        discovered_entities_text.append(f"Sublist3r: {sub}")
+
                 if is_tool_enabled("dnsrecon"):
                     dns_res = await OSINTModules.run_dnsrecon(target)
                     db.add(ScanLog(case_id=case.id, tool_name="dnsrecon", status="COMPLETED", stdout_log=dns_res["raw_log"], execution_time_sec=dns_res["duration"]))
@@ -279,7 +298,21 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                         db.add(Entity(case_id=case.id, category="DNS_RECORD", value=rec, source_tool="dnsrecon"))
                         discovered_entities_text.append(rec)
 
-            # 6. AI 情報自動總結
+                if is_tool_enabled("whatweb"):
+                    ww_res = await OSINTModules.run_whatweb(target)
+                    db.add(ScanLog(case_id=case.id, tool_name="whatweb", status="COMPLETED", stdout_log=ww_res["raw_log"], execution_time_sec=ww_res["duration"]))
+                    for t in ww_res.get("tech_stack", []):
+                        db.add(Entity(case_id=case.id, category="TECH_STACK", value=t, source_tool="whatweb"))
+                        discovered_entities_text.append(f"網站技術棧: {t}")
+
+                if is_tool_enabled("nmap"):
+                    nmap_res = await OSINTModules.run_nmap_quick(target)
+                    db.add(ScanLog(case_id=case.id, tool_name="nmap", status="COMPLETED", stdout_log=nmap_res["raw_log"], execution_time_sec=nmap_res["duration"]))
+                    for p in nmap_res.get("open_ports", []):
+                        db.add(Entity(case_id=case.id, category="OPEN_PORT", value=p, source_tool="nmap"))
+                        discovered_entities_text.append(f"開放服務埠: {p}")
+
+            # 6. AI 總結
             summary = await AIAnalyst.generate_dossier_summary(target, target_type, discovered_entities_text)
             case.ai_summary = summary
             case.status = CaseStatus.COMPLETED
@@ -311,7 +344,6 @@ async def create_investigation(
     await db.commit()
     await db.refresh(new_case)
 
-    # 非同步背景執行探測流水線
     background_tasks.add_task(
         execute_investigation_pipeline,
         new_case.id,

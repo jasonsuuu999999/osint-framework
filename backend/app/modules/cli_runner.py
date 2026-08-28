@@ -77,7 +77,6 @@ class OSINTModules:
         cmd = ["phoneinfoga", "scan", "-n", phone_number]
         code, out, duration = await SafeToolRunner.run_command(cmd, timeout=90)
         details = []
-        # 原生 Python libphonenumber 解析作為保底與補充
         try:
             parsed = phonenumbers.parse(phone_number, None)
             if phonenumbers.is_valid_number(parsed):
@@ -90,7 +89,50 @@ class OSINTModules:
             pass
         return {"tool": "phoneinfoga", "return_code": code, "duration": duration, "raw_log": out, "details": details}
 
-    # ==================== 4. 網域與資產模組 ====================
+    # ==================== 4. 網域、WAF、HTTP 探測與資產模組 ====================
+    @staticmethod
+    async def run_wafw00f(domain: str) -> Dict[str, Any]:
+        """探測網站後端所屬 WAF 防護 (Cloudflare, AWS WAF 等)"""
+        cmd = ["wafw00f", domain]
+        code, out, duration = await SafeToolRunner.run_command(cmd, timeout=60)
+        wafs = []
+        for line in out.splitlines():
+            if "is behind" in line or "behind" in line:
+                wafs.append(line.strip())
+        return {"tool": "wafw00f", "return_code": code, "duration": duration, "raw_log": out, "wafs": wafs}
+
+    @staticmethod
+    async def run_httpx_probe(domain: str) -> Dict[str, Any]:
+        """HTTP 指紋探測 (優先使用 httpx / httpx-toolkit CLI，無則原生 fallback)"""
+        exec_name = "httpx" if shutil.which("httpx") else ("httpx-toolkit" if shutil.which("httpx-toolkit") else None)
+        http_results = []
+        
+        if exec_name:
+            cmd = [exec_name, "-u", domain, "-title", "-status-code", "-tech-detect", "-silent"]
+            code, out, duration = await SafeToolRunner.run_command(cmd, timeout=60)
+            for line in out.splitlines():
+                if line.strip():
+                    http_results.append(line.strip())
+            return {"tool": "httpx", "return_code": code, "duration": duration, "raw_log": out, "results": http_results}
+        else:
+            # 原生 Python HTTP 探測 fallback
+            start = time.time()
+            raw_log = ""
+            for scheme in ["https", "http"]:
+                try:
+                    async with httpx.AsyncClient(timeout=6.0, follow_redirects=True, verify=False) as client:
+                        resp = await client.get(f"{scheme}://{domain}", headers={"User-Agent": "Mozilla/5.0"})
+                        title_match = re.search(r'<title>(.*?)</title>', resp.text, re.IGNORECASE)
+                        title = title_match.group(1).strip() if title_match else "No Title"
+                        server = resp.headers.get("Server", "Unknown")
+                        res_str = f"[{scheme.upper()}] Status: {resp.status_code} | Title: {title} | Server: {server}"
+                        http_results.append(res_str)
+                        raw_log += f"{res_str}\n"
+                        break
+                except Exception as e:
+                    raw_log += f"[{scheme.upper()}] 連線失敗: {str(e)}\n"
+            return {"tool": "httpx", "return_code": 0, "duration": round(time.time() - start, 2), "raw_log": raw_log, "results": http_results}
+
     @staticmethod
     async def run_theharvester(domain: str) -> Dict[str, Any]:
         cmd = ["theHarvester", "-d", domain, "-b", "certspotter,crtsh,dnsdumpster", "-l", "100"]
@@ -110,6 +152,17 @@ class OSINTModules:
         return {"tool": "amass", "return_code": code, "duration": duration, "raw_log": out, "subdomains": list(set(subdomains))}
 
     @staticmethod
+    async def run_sublist3r(domain: str) -> Dict[str, Any]:
+        cmd = ["sublist3r", "-d", domain, "-n"]
+        code, out, duration = await SafeToolRunner.run_command(cmd, timeout=120)
+        subdomains = []
+        for line in out.splitlines():
+            line_str = line.strip()
+            if domain in line_str and not line_str.startswith("[-]"):
+                subdomains.append(line_str)
+        return {"tool": "sublist3r", "return_code": code, "duration": duration, "raw_log": out, "subdomains": list(set(subdomains))}
+
+    @staticmethod
     async def run_dnsrecon(domain: str) -> Dict[str, Any]:
         cmd = ["dnsrecon", "-d", domain, "-t", "std"]
         code, out, duration = await SafeToolRunner.run_command(cmd, timeout=90)
@@ -120,13 +173,32 @@ class OSINTModules:
         return {"tool": "dnsrecon", "return_code": code, "duration": duration, "raw_log": out, "records": records}
 
     @staticmethod
+    async def run_whatweb(domain: str) -> Dict[str, Any]:
+        cmd = ["whatweb", domain, "--color=never", "--log-brief=/dev/stdout"]
+        code, out, duration = await SafeToolRunner.run_command(cmd, timeout=60)
+        tech_stack = []
+        for line in out.splitlines():
+            if domain in line and "[" in line:
+                tech_stack.append(line.strip())
+        return {"tool": "whatweb", "return_code": code, "duration": duration, "raw_log": out, "tech_stack": tech_stack}
+
+    @staticmethod
+    async def run_nmap_quick(target: str) -> Dict[str, Any]:
+        cmd = ["nmap", "-F", "-Pn", "--open", "-sT", target]
+        code, out, duration = await SafeToolRunner.run_command(cmd, timeout=120)
+        open_ports = []
+        for line in out.splitlines():
+            if "/tcp" in line and "open" in line:
+                open_ports.append(line.strip())
+        return {"tool": "nmap", "return_code": code, "duration": duration, "raw_log": out, "open_ports": open_ports}
+
+    # ==================== 5. 原生保底高速探測引擎 ====================
+    @staticmethod
     async def run_native_recon(target: str, target_type: str) -> Dict[str, Any]:
-        """純 Python 高速原生探測引擎（免外部 CLI，提供 100% 可用率保底）"""
         start_time = time.time()
         results = []
 
         if target_type == "DOMAIN":
-            # 1. crt.sh 憑證透明度日誌
             try:
                 async with httpx.AsyncClient(timeout=8.0) as client:
                     res = await client.get(f"https://crt.sh/?q=%25.{target}&output=json")
@@ -139,7 +211,6 @@ class OSINTModules:
             except Exception:
                 pass
 
-            # 2. DNS 記錄
             for rtype in ["A", "MX", "TXT", "NS"]:
                 try:
                     answers = dns.resolver.resolve(target, rtype)
@@ -148,7 +219,6 @@ class OSINTModules:
                 except Exception:
                     continue
 
-            # 3. WHOIS
             try:
                 w = whois.whois(target)
                 if w.registrar: results.append(f"註冊商: {w.registrar}")
@@ -159,7 +229,6 @@ class OSINTModules:
                 pass
 
         elif target_type == "PERSON":
-            # 跨平台快速探測
             platforms = [
                 ("GitHub", f"https://github.com/{target}"),
                 ("Twitter/X", f"https://x.com/{target}"),
@@ -177,7 +246,6 @@ class OSINTModules:
                         continue
 
         elif target_type == "EMAIL":
-            # MX 記錄與 Gravatar
             domain = target.split("@")[-1]
             try:
                 for rdata in dns.resolver.resolve(domain, "MX"):

@@ -20,7 +20,7 @@ class AIAnalyst:
         data_text = "\n".join(entities_summary) if entities_summary else "未探測到額外關聯實體"
 
         prompt = f"""
-你是一名資深的 OSINT 情報分析專家。以下是針對目標「{target}」（類型：{target_type}）探測到的情報數據：
+你是一名資深的 OSINT 情報分析專家。以下是針對目標「{target}」（類型：{target_type}）由多項 Kali/開源工具探測到的情報數據：
 
 {data_text}
 
@@ -32,30 +32,50 @@ class AIAnalyst:
 """
         error_details = []
 
-        # 1. 優先使用 Gemini (動態獲取可用模型)
+        # 1. 優先使用 Google Gemini (適配最新模型)
         if g_key:
             try:
                 import google.generativeai as genai
                 genai.configure(api_key=g_key)
-                
-                # 自動搜尋帳號當前真正支援 generateContent 的模型清單
-                supported_models = []
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        supported_models.append(m.name)
-                
-                if not supported_models:
-                    error_details.append("Gemini: 此 API Key 未找到支援 generateContent 的可用模型")
-                else:
-                    # 優先選擇 flash，若無則按順序取第一個
-                    selected_model = next((m for m in supported_models if 'flash' in m), supported_models[0])
-                    model = genai.GenerativeModel(selected_model)
-                    response = model.generate_content(prompt)
-                    if response and response.text:
-                        return response.text
+
+                # 最新主流模型清單優先嘗試
+                candidate_models = [
+                    "gemini-3.6-flash",
+                    "gemini-3.6-pro",
+                    "gemini-3-flash",
+                    "gemini-2.0-flash",
+                    "gemini-1.5-flash"
+                ]
+
+                # 動態獲取帳號支援的所有模型
+                available_models = []
+                try:
+                    for m in genai.list_models():
+                        if 'generateContent' in m.supported_generation_methods:
+                            # 移除 'models/' 前綴以利統一比對
+                            clean_name = m.name.replace("models/", "")
+                            available_models.append(clean_name)
+                except Exception as list_err:
+                    error_details.append(f"ListModels 查詢略過: {str(list_err)}")
+
+                # 建立嘗試順序：優先候選 -> 動態清單中的其他模型
+                models_to_run = [m for m in candidate_models if m in available_models]
+                if not models_to_run:
+                    models_to_run = candidate_models + available_models
+
+                # 執行生成
+                for model_name in models_to_run:
+                    try:
+                        model = genai.GenerativeModel(model_name)
+                        response = model.generate_content(prompt)
+                        if response and response.text:
+                            return response.text
+                    except Exception as me:
+                        error_details.append(f"Gemini({model_name}): {str(me)}")
+                        continue
 
             except Exception as ge:
-                error_details.append(f"Gemini 動態調用失敗: {str(ge)}")
+                error_details.append(f"Gemini 初始化異常: {str(ge)}")
 
         # 2. 備援使用 OpenAI
         if o_key:

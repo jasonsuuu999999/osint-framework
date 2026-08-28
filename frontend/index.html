@@ -127,16 +127,21 @@
                     </div>
 
                     <!-- 自選工具勾選清單 -->
-                    <div v-if="mode === 'custom'" class="bg-cyber-900 p-2.5 rounded border border-gray-700 space-y-1.5 text-xs max-h-40 overflow-y-auto">
-                        <div class="text-[11px] font-bold text-gray-400 mb-1 border-b border-gray-800 pb-1">勾選啟用的模組：</div>
-                        <label class="flex items-center text-gray-300"><input type="checkbox" value="native_engine" v-model="selectedTools" class="mr-2"> 原生高速引擎 (DNS/WHOIS/HTTP)</label>
+                    <div v-if="mode === 'custom'" class="bg-cyber-900 p-2.5 rounded border border-gray-700 space-y-1.5 text-xs max-h-44 overflow-y-auto">
+                        <div class="text-[11px] font-bold text-gray-400 mb-1 border-b border-gray-800 pb-1">啟用的探測工具：</div>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="native_engine" v-model="selectedTools" class="mr-2"> 原生高速引擎 (DNS/WHOIS)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="wafw00f" v-model="selectedTools" class="mr-2"> WAFW00F (WAF 指紋辨識)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="httpx" v-model="selectedTools" class="mr-2"> HTTPX (Web 協定與標題)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="whatweb" v-model="selectedTools" class="mr-2"> WhatWeb (網站技術棧)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="theHarvester" v-model="selectedTools" class="mr-2"> theHarvester (資產枚舉)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="amass" v-model="selectedTools" class="mr-2"> Amass (子網域枚舉)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="sublist3r" v-model="selectedTools" class="mr-2"> Sublist3r (被動子網域)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="dnsrecon" v-model="selectedTools" class="mr-2"> DNSRecon (DNS 解析)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="nmap" v-model="selectedTools" class="mr-2"> Nmap (快速服務埠)</label>
                         <label class="flex items-center text-gray-300"><input type="checkbox" value="maigret" v-model="selectedTools" class="mr-2"> Maigret (社群帳號)</label>
                         <label class="flex items-center text-gray-300"><input type="checkbox" value="sherlock" v-model="selectedTools" class="mr-2"> Sherlock (社群足跡)</label>
                         <label class="flex items-center text-gray-300"><input type="checkbox" value="holehe" v-model="selectedTools" class="mr-2"> Holehe (Email 註冊反查)</label>
-                        <label class="flex items-center text-gray-300"><input type="checkbox" value="phoneinfoga" v-model="selectedTools" class="mr-2"> PhoneInfoga (電話情資)</label>
-                        <label class="flex items-center text-gray-300"><input type="checkbox" value="theHarvester" v-model="selectedTools" class="mr-2"> theHarvester (資產)</label>
-                        <label class="flex items-center text-gray-300"><input type="checkbox" value="amass" v-model="selectedTools" class="mr-2"> Amass (子網域枚舉)</label>
-                        <label class="flex items-center text-gray-300"><input type="checkbox" value="dnsrecon" v-model="selectedTools" class="mr-2"> DNSRecon (DNS 解析)</label>
+                        <label class="flex items-center text-gray-300"><input type="checkbox" value="phoneinfoga" v-model="selectedTools" class="mr-2"> PhoneInfoga (門號情資)</label>
                     </div>
 
                     <button @click="startInvestigation" :disabled="isLoading || !targetInput.trim()" class="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-white text-xs font-bold py-2 rounded transition flex justify-center items-center">
@@ -227,7 +232,10 @@
                 const targetInput = ref('');
                 const searchQuery = ref('');
                 const mode = ref('auto');
-                const selectedTools = ref(['native_engine', 'maigret', 'sherlock', 'holehe', 'phoneinfoga', 'theHarvester', 'amass', 'dnsrecon']);
+                const selectedTools = ref([
+                    'native_engine', 'wafw00f', 'httpx', 'whatweb', 'theHarvester', 
+                    'amass', 'sublist3r', 'dnsrecon', 'nmap', 'maigret', 'sherlock', 'holehe', 'phoneinfoga'
+                ]);
                 const isLoading = ref(false);
                 const activeTab = ref('ai');
                 const currentCase = ref({});
