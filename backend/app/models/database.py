@@ -4,7 +4,7 @@ from enum import Enum
 from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy import String, DateTime, ForeignKey, Text, Float, Integer
+from sqlalchemy import String, DateTime, ForeignKey, Text, Float, Integer, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ENUM as PG_ENUM
 from dotenv import load_dotenv
 
@@ -39,7 +39,6 @@ class UserRole(str, Enum):
     ANALYST = "ANALYST"
     VIEWER = "VIEWER"
 
-# PostgreSQL Enum type definitions matching existing DB schemas
 TargetTypeEnum = PG_ENUM(
     TargetType,
     name="targettype",
@@ -105,7 +104,7 @@ class Entity(Base):
     category: Mapped[str] = mapped_column(String(100), nullable=False)
     value: Mapped[str] = mapped_column(String(500), nullable=False)
     source_tool: Mapped[str] = mapped_column(String(100), nullable=False)
-    properties: Mapped[dict] = mapped_column(JSONB, default=dict)
+    properties: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     case: Mapped["Case"] = relationship(back_populates="entities")
@@ -127,6 +126,10 @@ class ScanLog(Base):
     case: Mapped["Case"] = relationship(back_populates="scan_logs")
 
 async def init_db():
-    """Initializes database schema tables."""
+    """Initializes schema and auto-migrates missing columns."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Auto-migration safety patches
+        await conn.execute(text("ALTER TABLE entities ADD COLUMN IF NOT EXISTS properties JSONB DEFAULT '{}'::jsonb;"))
+        await conn.execute(text("ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS command_executed TEXT;"))
+        await conn.execute(text("ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS return_code INTEGER DEFAULT 0;"))

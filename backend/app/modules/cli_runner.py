@@ -10,11 +10,11 @@ from phonenumbers import geocoder, carrier
 from typing import Dict, Any, List, Tuple
 
 class SafeToolRunner:
-    """Safe asynchronous CLI command execution handler."""
+    """Safe asynchronous CLI command execution handler with hard timeout and process kill."""
     @staticmethod
-    async def run_command(cmd_args: List[str], timeout: int = 180) -> Tuple[int, str, str, float]:
+    async def run_command(cmd_args: List[str], timeout: int = 60) -> Tuple[int, str, str, float]:
         """
-        Executes a CLI command safely and captures output, return code, and execution time.
+        Executes a CLI command safely, terminating hung processes automatically.
         Returns: (return_code, command_str, stdout_log, duration_seconds)
         """
         start_time = time.time()
@@ -24,6 +24,7 @@ class SafeToolRunner:
         if not exec_path:
             return -1, cmd_str, f"TOOL_NOT_FOUND: Binary '{cmd_args[0]}' is not installed in the system PATH.", 0.0
 
+        process = None
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd_args,
@@ -34,9 +35,22 @@ class SafeToolRunner:
             exec_time = round(time.time() - start_time, 2)
             return process.returncode, cmd_str, stdout.decode('utf-8', errors='replace'), exec_time
         except asyncio.TimeoutError:
-            return -1, cmd_str, f"TIMEOUT: Command exceeded maximum runtime limit ({timeout}s) and was terminated.", timeout
+            if process:
+                try:
+                    process.kill()
+                    await process.wait()
+                except Exception:
+                    pass
+            exec_time = round(time.time() - start_time, 2)
+            return -1, cmd_str, f"TIMEOUT: Command exceeded maximum runtime limit ({timeout}s) and was terminated.", exec_time
         except Exception as e:
-            return -1, cmd_str, f"EXECUTION_ERROR: {str(e)}", 0.0
+            if process:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+            exec_time = round(time.time() - start_time, 2)
+            return -1, cmd_str, f"EXECUTION_ERROR: {str(e)}", exec_time
 
 class OSINTModules:
     """OSINT multi-source recon and CLI probing modules."""
@@ -45,8 +59,8 @@ class OSINTModules:
     @staticmethod
     async def run_maigret(username: str) -> Dict[str, Any]:
         """Runs Maigret for deep username profiling across social platforms."""
-        cmd = ["maigret", username, "--timeout", "10", "--no-color"]
-        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=120)
+        cmd = ["maigret", username, "--timeout", "5", "--no-color"]
+        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=45)
         found_accounts = []
         if code == 0:
             for line in out.splitlines():
@@ -65,8 +79,8 @@ class OSINTModules:
     @staticmethod
     async def run_sherlock(username: str) -> Dict[str, Any]:
         """Runs Sherlock to search social media accounts by username."""
-        cmd = ["sherlock", username, "--timeout", "10", "--print-found"]
-        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=120)
+        cmd = ["sherlock", username, "--timeout", "5", "--print-found"]
+        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=45)
         found_accounts = []
         for line in out.splitlines():
             if "[+]" in line:
@@ -86,7 +100,7 @@ class OSINTModules:
     async def run_holehe(email: str) -> Dict[str, Any]:
         """Runs Holehe to check email account registrations across 120+ platforms."""
         cmd = ["holehe", email, "--only-used", "--no-color"]
-        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=120)
+        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=40)
         discovered_platforms = []
         if code == 0:
             for line in out.splitlines():
@@ -107,7 +121,7 @@ class OSINTModules:
     async def run_phoneinfoga(phone_number: str) -> Dict[str, Any]:
         """Runs PhoneInfoga with native libphonenumber fallback."""
         cmd = ["phoneinfoga", "scan", "-n", phone_number]
-        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=90)
+        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=30)
         details = []
         try:
             parsed = phonenumbers.parse(phone_number, None)
@@ -131,17 +145,14 @@ class OSINTModules:
     # ==================== 4. Domain & Infrastructure Probing ====================
     @staticmethod
     async def run_theharvester(domain: str) -> Dict[str, Any]:
-        """
-        Optimized theHarvester syntax leveraging active free sources and cert search engines.
-        """
-        sources = "hackertarget,otx,rapiddns,crtsh,certspotter,yahoo,duckduckgo"
-        cmd = ["theHarvester", "-d", domain, "-b", sources, "-l", "200"]
-        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=180)
+        """Runs theHarvester with fast and lightweight OSINT sources."""
+        sources = "hackertarget,otx,rapiddns,crtsh,duckduckgo"
+        cmd = ["theHarvester", "-d", domain, "-b", sources, "-l", "100"]
+        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=50)
         
         discovered_hosts = []
         discovered_emails = []
 
-        # Parse subdomains and emails from the output
         for line in out.splitlines():
             line_clean = line.strip()
             if domain in line_clean and not " " in line_clean and not line_clean.startswith("[*]"):
@@ -164,7 +175,7 @@ class OSINTModules:
     async def run_wafw00f(domain: str) -> Dict[str, Any]:
         """Runs Wafw00f to identify Web Application Firewalls protecting the target."""
         cmd = ["wafw00f", domain]
-        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=60)
+        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=30)
         wafs = []
         for line in out.splitlines():
             if "is behind" in line or "behind" in line:
@@ -185,8 +196,8 @@ class OSINTModules:
         http_results = []
         
         if exec_name:
-            cmd = [exec_name, "-u", domain, "-title", "-status-code", "-tech-detect", "-silent"]
-            code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=60)
+            cmd = [exec_name, "-u", domain, "-title", "-status-code", "-tech-detect", "-silent", "-timeout", "5"]
+            code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=30)
             for line in out.splitlines():
                 if line.strip():
                     http_results.append(line.strip())
@@ -199,13 +210,12 @@ class OSINTModules:
                 "results": http_results
             }
         else:
-            # Native Python fallback
             start = time.time()
             raw_log = ""
             for scheme in ["https", "http"]:
                 try:
-                    async with httpx.AsyncClient(timeout=6.0, follow_redirects=True, verify=False) as client:
-                        resp = await client.get(f"{scheme}://{domain}", headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                    async with httpx.AsyncClient(timeout=4.0, follow_redirects=True, verify=False) as client:
+                        resp = await client.get(f"{scheme}://{domain}", headers={"User-Agent": "Mozilla/5.0"})
                         title_match = re.search(r'<title>(.*?)</title>', resp.text, re.IGNORECASE)
                         title = title_match.group(1).strip() if title_match else "No Title"
                         server = resp.headers.get("Server", "Unknown")
@@ -217,7 +227,7 @@ class OSINTModules:
                     raw_log += f"[{scheme.upper()}] Probe failed: {str(e)}\n"
             return {
                 "tool": "httpx",
-                "command": f"python-httpx GET (https/http)://{domain}",
+                "command": f"python-httpx GET {domain}",
                 "return_code": 0,
                 "duration": round(time.time() - start, 2),
                 "raw_log": raw_log,
@@ -226,9 +236,9 @@ class OSINTModules:
 
     @staticmethod
     async def run_amass(domain: str) -> Dict[str, Any]:
-        """Runs OWASP Amass in passive mode for fast subdomain enumeration."""
-        cmd = ["amass", "enum", "-passive", "-d", domain, "-timeout", "3"]
-        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=180)
+        """Runs OWASP Amass in passive mode with strict 45s timeout."""
+        cmd = ["amass", "enum", "-passive", "-d", domain, "-timeout", "1"]
+        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=45)
         subdomains = []
         if code == 0:
             for line in out.splitlines():
@@ -247,8 +257,8 @@ class OSINTModules:
     @staticmethod
     async def run_sublist3r(domain: str) -> Dict[str, Any]:
         """Runs Sublist3r passive search engine crawler."""
-        cmd = ["sublist3r", "-d", domain, "-n"]
-        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=120)
+        cmd = ["sublist3r", "-d", domain, "-n", "-t", "5"]
+        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=40)
         subdomains = []
         for line in out.splitlines():
             line_str = line.strip()
@@ -266,8 +276,8 @@ class OSINTModules:
     @staticmethod
     async def run_dnsrecon(domain: str) -> Dict[str, Any]:
         """Runs DNSRecon standard enumeration."""
-        cmd = ["dnsrecon", "-d", domain, "-t", "std"]
-        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=90)
+        cmd = ["dnsrecon", "-d", domain, "-t", "std", "--lifetime", "2"]
+        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=30)
         records = []
         for line in out.splitlines():
             if "[*]" in line and any(k in line for k in [" A ", " AAAA ", " MX ", " NS ", " TXT "]):
@@ -284,8 +294,8 @@ class OSINTModules:
     @staticmethod
     async def run_whatweb(domain: str) -> Dict[str, Any]:
         """Runs WhatWeb for CMS and web framework identification."""
-        cmd = ["whatweb", domain, "--color=never", "--log-brief=/dev/stdout"]
-        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=60)
+        cmd = ["whatweb", domain, "--color=never", "--log-brief=/dev/stdout", "--max-redirects=2"]
+        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=30)
         tech_stack = []
         for line in out.splitlines():
             if domain in line and "[" in line:
@@ -302,8 +312,8 @@ class OSINTModules:
     @staticmethod
     async def run_nmap_quick(target: str) -> Dict[str, Any]:
         """Runs fast top-port Nmap reconnaissance (-F -Pn -sT)."""
-        cmd = ["nmap", "-F", "-Pn", "--open", "-sT", target]
-        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=120)
+        cmd = ["nmap", "-F", "-Pn", "--open", "-sT", "--host-timeout", "25s", target]
+        code, cmd_str, out, duration = await SafeToolRunner.run_command(cmd, timeout=35)
         open_ports = []
         for line in out.splitlines():
             if "/tcp" in line and "open" in line:
@@ -328,7 +338,7 @@ class OSINTModules:
         if target_type == "DOMAIN":
             # crt.sh Certificate Transparency Logs
             try:
-                async with httpx.AsyncClient(timeout=8.0) as client:
+                async with httpx.AsyncClient(timeout=6.0) as client:
                     res = await client.get(f"https://crt.sh/?q=%25.{target}&output=json")
                     if res.status_code == 200:
                         for item in res.json()[:25]:
@@ -340,9 +350,12 @@ class OSINTModules:
                 pass
 
             # DNS Standard Lookup
+            resolver = dns.resolver.Resolver()
+            resolver.timeout = 2.0
+            resolver.lifetime = 2.0
             for rtype in ["A", "MX", "TXT", "NS"]:
                 try:
-                    answers = dns.resolver.resolve(target, rtype)
+                    answers = resolver.resolve(target, rtype)
                     for rdata in answers:
                         results.append(f"DNS {rtype}: {rdata.to_text().rstrip('.')}")
                 except Exception:
@@ -366,7 +379,7 @@ class OSINTModules:
                 ("Medium", f"https://medium.com/@{target}"),
                 ("V2EX", f"https://www.v2ex.com/member/{target}")
             ]
-            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
                 for name, url in platforms:
                     try:
                         resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -378,7 +391,10 @@ class OSINTModules:
         elif target_type == "EMAIL":
             domain = target.split("@")[-1]
             try:
-                for rdata in dns.resolver.resolve(domain, "MX"):
+                resolver = dns.resolver.Resolver()
+                resolver.timeout = 2.0
+                resolver.lifetime = 2.0
+                for rdata in resolver.resolve(domain, "MX"):
                     results.append(f"Mail Server (MX): {rdata.exchange.to_text().rstrip('.')}")
             except Exception:
                 pass

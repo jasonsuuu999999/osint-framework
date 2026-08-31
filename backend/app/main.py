@@ -36,7 +36,7 @@ from app.nlp.ai_analyst import AIAnalyst
 
 app = FastAPI(
     title="OSINT Investigation Platform API",
-    version="1.4.5",
+    version="1.4.6",
     description="Multi-Entity OSINT Automation & Intelligence Visualization Platform"
 )
 
@@ -225,7 +225,7 @@ async def delete_user(
 # ==================== Background Investigation Pipeline ====================
 
 async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target_type: str, selected_tools: Optional[List[str]]):
-    """Orchestrates modular recon CLI execution and entity persistence."""
+    """Orchestrates modular recon CLI execution with full isolation and state commit."""
     async with AsyncSessionLocal() as db:
         case = await db.get(Case, case_id)
         if not case:
@@ -240,19 +240,23 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
         try:
             # 1. Native Fallback Engine
             if is_tool_enabled("native_engine"):
-                native_res = await OSINTModules.run_native_recon(target, target_type)
-                db.add(ScanLog(
-                    case_id=case.id,
-                    tool_name="native_engine",
-                    command_executed=native_res["command"],
-                    status="COMPLETED",
-                    stdout_log=native_res["raw_log"],
-                    return_code=native_res["return_code"],
-                    execution_time_sec=native_res["duration"]
-                ))
-                for r in native_res.get("results", []):
-                    db.add(Entity(case_id=case.id, category="RECON_ASSET", value=r, source_tool="native_engine"))
-                    discovered_entities_text.append(r)
+                try:
+                    native_res = await OSINTModules.run_native_recon(target, target_type)
+                    db.add(ScanLog(
+                        case_id=case.id,
+                        tool_name="native_engine",
+                        command_executed=native_res["command"],
+                        status="COMPLETED",
+                        stdout_log=native_res["raw_log"],
+                        return_code=native_res["return_code"],
+                        execution_time_sec=native_res["duration"]
+                    ))
+                    for r in native_res.get("results", []):
+                        db.add(Entity(case_id=case.id, category="RECON_ASSET", value=r, source_tool="native_engine"))
+                        discovered_entities_text.append(r)
+                    await db.commit()
+                except Exception as e:
+                    print(f"[-] Error in native_engine: {e}")
 
             # 2. Identity & Person Tools
             if target_type == "PERSON":
@@ -260,200 +264,253 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                 alias = expanded.get("pinyin_continuous") or target
                 
                 if is_tool_enabled("maigret"):
-                    m_res = await OSINTModules.run_maigret(alias)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="maigret",
-                        command_executed=m_res["command"],
-                        status="COMPLETED" if m_res["return_code"] == 0 else "FAILED",
-                        stdout_log=m_res["raw_log"],
-                        return_code=m_res["return_code"],
-                        execution_time_sec=m_res["duration"]
-                    ))
-                    for a in m_res.get("accounts", []):
-                        db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="maigret"))
-                        discovered_entities_text.append(f"Maigret Account: {a}")
+                    try:
+                        m_res = await OSINTModules.run_maigret(alias)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="maigret",
+                            command_executed=m_res["command"],
+                            status="COMPLETED" if m_res["return_code"] == 0 else "FAILED",
+                            stdout_log=m_res["raw_log"],
+                            return_code=m_res["return_code"],
+                            execution_time_sec=m_res["duration"]
+                        ))
+                        for a in m_res.get("accounts", []):
+                            db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="maigret"))
+                            discovered_entities_text.append(f"Maigret Account: {a}")
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in maigret: {e}")
 
                 if is_tool_enabled("sherlock"):
-                    s_res = await OSINTModules.run_sherlock(alias)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="sherlock",
-                        command_executed=s_res["command"],
-                        status="COMPLETED" if s_res["return_code"] == 0 else "FAILED",
-                        stdout_log=s_res["raw_log"],
-                        return_code=s_res["return_code"],
-                        execution_time_sec=s_res["duration"]
-                    ))
-                    for a in s_res.get("accounts", []):
-                        db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="sherlock"))
-                        discovered_entities_text.append(f"Sherlock Account: {a}")
+                    try:
+                        s_res = await OSINTModules.run_sherlock(alias)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="sherlock",
+                            command_executed=s_res["command"],
+                            status="COMPLETED" if s_res["return_code"] == 0 else "FAILED",
+                            stdout_log=s_res["raw_log"],
+                            return_code=s_res["return_code"],
+                            execution_time_sec=s_res["duration"]
+                        ))
+                        for a in s_res.get("accounts", []):
+                            db.add(Entity(case_id=case.id, category="SOCIAL_PROFILE", value=a, source_tool="sherlock"))
+                            discovered_entities_text.append(f"Sherlock Account: {a}")
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in sherlock: {e}")
 
             # 3. Email Tools
             elif target_type == "EMAIL":
                 if is_tool_enabled("holehe"):
-                    h_res = await OSINTModules.run_holehe(target)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="holehe",
-                        command_executed=h_res["command"],
-                        status="COMPLETED" if h_res["return_code"] == 0 else "FAILED",
-                        stdout_log=h_res["raw_log"],
-                        return_code=h_res["return_code"],
-                        execution_time_sec=h_res["duration"]
-                    ))
-                    for p in h_res.get("platforms", []):
-                        db.add(Entity(case_id=case.id, category="SERVICE_REGISTRATION", value=p, source_tool="holehe"))
-                        discovered_entities_text.append(f"Registered Service: {p}")
+                    try:
+                        h_res = await OSINTModules.run_holehe(target)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="holehe",
+                            command_executed=h_res["command"],
+                            status="COMPLETED" if h_res["return_code"] == 0 else "FAILED",
+                            stdout_log=h_res["raw_log"],
+                            return_code=h_res["return_code"],
+                            execution_time_sec=h_res["duration"]
+                        ))
+                        for p in h_res.get("platforms", []):
+                            db.add(Entity(case_id=case.id, category="SERVICE_REGISTRATION", value=p, source_tool="holehe"))
+                            discovered_entities_text.append(f"Registered Service: {p}")
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in holehe: {e}")
 
             # 4. Phone Tools
             elif target_type == "PHONE":
                 if is_tool_enabled("phoneinfoga"):
-                    p_res = await OSINTModules.run_phoneinfoga(target)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="phoneinfoga",
-                        command_executed=p_res["command"],
-                        status="COMPLETED" if p_res["return_code"] == 0 else "FAILED",
-                        stdout_log=p_res["raw_log"],
-                        return_code=p_res["return_code"],
-                        execution_time_sec=p_res["duration"]
-                    ))
-                    for d in p_res.get("details", []):
-                        db.add(Entity(case_id=case.id, category="PHONE_INTEL", value=d, source_tool="phoneinfoga"))
-                        discovered_entities_text.append(f"Phone Intel: {d}")
+                    try:
+                        p_res = await OSINTModules.run_phoneinfoga(target)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="phoneinfoga",
+                            command_executed=p_res["command"],
+                            status="COMPLETED" if p_res["return_code"] == 0 else "FAILED",
+                            stdout_log=p_res["raw_log"],
+                            return_code=p_res["return_code"],
+                            execution_time_sec=p_res["duration"]
+                        ))
+                        for d in p_res.get("details", []):
+                            db.add(Entity(case_id=case.id, category="PHONE_INTEL", value=d, source_tool="phoneinfoga"))
+                            discovered_entities_text.append(f"Phone Intel: {d}")
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in phoneinfoga: {e}")
 
             # 5. Domain, WAF & Infrastructure
             elif target_type == "DOMAIN":
                 if is_tool_enabled("wafw00f"):
-                    waf_res = await OSINTModules.run_wafw00f(target)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="wafw00f",
-                        command_executed=waf_res["command"],
-                        status="COMPLETED" if waf_res["return_code"] == 0 else "FAILED",
-                        stdout_log=waf_res["raw_log"],
-                        return_code=waf_res["return_code"],
-                        execution_time_sec=waf_res["duration"]
-                    ))
-                    for w in waf_res.get("wafs", []):
-                        db.add(Entity(case_id=case.id, category="WAF_FINGERPRINT", value=w, source_tool="wafw00f"))
-                        discovered_entities_text.append(f"WAF Protection: {w}")
+                    try:
+                        waf_res = await OSINTModules.run_wafw00f(target)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="wafw00f",
+                            command_executed=waf_res["command"],
+                            status="COMPLETED" if waf_res["return_code"] == 0 else "FAILED",
+                            stdout_log=waf_res["raw_log"],
+                            return_code=waf_res["return_code"],
+                            execution_time_sec=waf_res["duration"]
+                        ))
+                        for w in waf_res.get("wafs", []):
+                            db.add(Entity(case_id=case.id, category="WAF_FINGERPRINT", value=w, source_tool="wafw00f"))
+                            discovered_entities_text.append(f"WAF Protection: {w}")
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in wafw00f: {e}")
 
                 if is_tool_enabled("httpx"):
-                    hx_res = await OSINTModules.run_httpx_probe(target)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="httpx",
-                        command_executed=hx_res["command"],
-                        status="COMPLETED" if hx_res["return_code"] == 0 else "FAILED",
-                        stdout_log=hx_res["raw_log"],
-                        return_code=hx_res["return_code"],
-                        execution_time_sec=hx_res["duration"]
-                    ))
-                    for h in hx_res.get("results", []):
-                        db.add(Entity(case_id=case.id, category="HTTP_PROBE", value=h, source_tool="httpx"))
-                        discovered_entities_text.append(f"HTTP Probe: {h}")
+                    try:
+                        hx_res = await OSINTModules.run_httpx_probe(target)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="httpx",
+                            command_executed=hx_res["command"],
+                            status="COMPLETED" if hx_res["return_code"] == 0 else "FAILED",
+                            stdout_log=hx_res["raw_log"],
+                            return_code=hx_res["return_code"],
+                            execution_time_sec=hx_res["duration"]
+                        ))
+                        for h in hx_res.get("results", []):
+                            db.add(Entity(case_id=case.id, category="HTTP_PROBE", value=h, source_tool="httpx"))
+                            discovered_entities_text.append(f"HTTP Probe: {h}")
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in httpx: {e}")
 
                 if is_tool_enabled("theHarvester"):
-                    th_res = await OSINTModules.run_theharvester(target)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="theHarvester",
-                        command_executed=th_res["command"],
-                        status="COMPLETED" if th_res["return_code"] == 0 else "FAILED",
-                        stdout_log=th_res["raw_log"],
-                        return_code=th_res["return_code"],
-                        execution_time_sec=th_res["duration"]
-                    ))
-                    for h in th_res.get("hosts", []):
-                        db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=h, source_tool="theHarvester"))
-                        discovered_entities_text.append(f"theHarvester Host: {h}")
-                    for em in th_res.get("emails", []):
-                        db.add(Entity(case_id=case.id, category="EMAIL", value=em, source_tool="theHarvester"))
-                        discovered_entities_text.append(f"theHarvester Email: {em}")
-
-                if is_tool_enabled("amass"):
-                    am_res = await OSINTModules.run_amass(target)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="amass",
-                        command_executed=am_res["command"],
-                        status="COMPLETED" if am_res["return_code"] == 0 else "FAILED",
-                        stdout_log=am_res["raw_log"],
-                        return_code=am_res["return_code"],
-                        execution_time_sec=am_res["duration"]
-                    ))
-                    for sub in am_res.get("subdomains", []):
-                        db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=sub, source_tool="amass"))
-                        discovered_entities_text.append(f"Amass Subdomain: {sub}")
-
-                if is_tool_enabled("sublist3r"):
-                    sub_res = await OSINTModules.run_sublist3r(target)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="sublist3r",
-                        command_executed=sub_res["command"],
-                        status="COMPLETED" if sub_res["return_code"] == 0 else "FAILED",
-                        stdout_log=sub_res["raw_log"],
-                        return_code=sub_res["return_code"],
-                        execution_time_sec=sub_res["duration"]
-                    ))
-                    for sub in sub_res.get("subdomains", []):
-                        db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=sub, source_tool="sublist3r"))
-                        discovered_entities_text.append(f"Sublist3r Subdomain: {sub}")
+                    try:
+                        th_res = await OSINTModules.run_theharvester(target)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="theHarvester",
+                            command_executed=th_res["command"],
+                            status="COMPLETED" if th_res["return_code"] == 0 else "FAILED",
+                            stdout_log=th_res["raw_log"],
+                            return_code=th_res["return_code"],
+                            execution_time_sec=th_res["duration"]
+                        ))
+                        for h in th_res.get("hosts", []):
+                            db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=h, source_tool="theHarvester"))
+                            discovered_entities_text.append(f"theHarvester Host: {h}")
+                        for em in th_res.get("emails", []):
+                            db.add(Entity(case_id=case.id, category="EMAIL", value=em, source_tool="theHarvester"))
+                            discovered_entities_text.append(f"theHarvester Email: {em}")
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in theHarvester: {e}")
 
                 if is_tool_enabled("dnsrecon"):
-                    dns_res = await OSINTModules.run_dnsrecon(target)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="dnsrecon",
-                        command_executed=dns_res["command"],
-                        status="COMPLETED" if dns_res["return_code"] == 0 else "FAILED",
-                        stdout_log=dns_res["raw_log"],
-                        return_code=dns_res["return_code"],
-                        execution_time_sec=dns_res["duration"]
-                    ))
-                    for rec in dns_res.get("records", []):
-                        db.add(Entity(case_id=case.id, category="DNS_RECORD", value=rec, source_tool="dnsrecon"))
-                        discovered_entities_text.append(rec)
+                    try:
+                        dns_res = await OSINTModules.run_dnsrecon(target)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="dnsrecon",
+                            command_executed=dns_res["command"],
+                            status="COMPLETED" if dns_res["return_code"] == 0 else "FAILED",
+                            stdout_log=dns_res["raw_log"],
+                            return_code=dns_res["return_code"],
+                            execution_time_sec=dns_res["duration"]
+                        ))
+                        for rec in dns_res.get("records", []):
+                            db.add(Entity(case_id=case.id, category="DNS_RECORD", value=rec, source_tool="dnsrecon"))
+                            discovered_entities_text.append(rec)
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in dnsrecon: {e}")
 
                 if is_tool_enabled("whatweb"):
-                    ww_res = await OSINTModules.run_whatweb(target)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="whatweb",
-                        command_executed=ww_res["command"],
-                        status="COMPLETED" if ww_res["return_code"] == 0 else "FAILED",
-                        stdout_log=ww_res["raw_log"],
-                        return_code=ww_res["return_code"],
-                        execution_time_sec=ww_res["duration"]
-                    ))
-                    for t in ww_res.get("tech_stack", []):
-                        db.add(Entity(case_id=case.id, category="TECH_STACK", value=t, source_tool="whatweb"))
-                        discovered_entities_text.append(f"Web Tech Stack: {t}")
+                    try:
+                        ww_res = await OSINTModules.run_whatweb(target)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="whatweb",
+                            command_executed=ww_res["command"],
+                            status="COMPLETED" if ww_res["return_code"] == 0 else "FAILED",
+                            stdout_log=ww_res["raw_log"],
+                            return_code=ww_res["return_code"],
+                            execution_time_sec=ww_res["duration"]
+                        ))
+                        for t in ww_res.get("tech_stack", []):
+                            db.add(Entity(case_id=case.id, category="TECH_STACK", value=t, source_tool="whatweb"))
+                            discovered_entities_text.append(f"Web Tech Stack: {t}")
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in whatweb: {e}")
 
                 if is_tool_enabled("nmap"):
-                    nmap_res = await OSINTModules.run_nmap_quick(target)
-                    db.add(ScanLog(
-                        case_id=case.id,
-                        tool_name="nmap",
-                        command_executed=nmap_res["command"],
-                        status="COMPLETED" if nmap_res["return_code"] == 0 else "FAILED",
-                        stdout_log=nmap_res["raw_log"],
-                        return_code=nmap_res["return_code"],
-                        execution_time_sec=nmap_res["duration"]
-                    ))
-                    for p in nmap_res.get("open_ports", []):
-                        db.add(Entity(case_id=case.id, category="OPEN_PORT", value=p, source_tool="nmap"))
-                        discovered_entities_text.append(f"Open Port: {p}")
+                    try:
+                        nmap_res = await OSINTModules.run_nmap_quick(target)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="nmap",
+                            command_executed=nmap_res["command"],
+                            status="COMPLETED" if nmap_res["return_code"] == 0 else "FAILED",
+                            stdout_log=nmap_res["raw_log"],
+                            return_code=nmap_res["return_code"],
+                            execution_time_sec=nmap_res["duration"]
+                        ))
+                        for p in nmap_res.get("open_ports", []):
+                            db.add(Entity(case_id=case.id, category="OPEN_PORT", value=p, source_tool="nmap"))
+                            discovered_entities_text.append(f"Open Port: {p}")
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in nmap: {e}")
+
+                if is_tool_enabled("sublist3r"):
+                    try:
+                        sub_res = await OSINTModules.run_sublist3r(target)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="sublist3r",
+                            command_executed=sub_res["command"],
+                            status="COMPLETED" if sub_res["return_code"] == 0 else "FAILED",
+                            stdout_log=sub_res["raw_log"],
+                            return_code=sub_res["return_code"],
+                            execution_time_sec=sub_res["duration"]
+                        ))
+                        for sub in sub_res.get("subdomains", []):
+                            db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=sub, source_tool="sublist3r"))
+                            discovered_entities_text.append(f"Sublist3r Subdomain: {sub}")
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in sublist3r: {e}")
+
+                if is_tool_enabled("amass"):
+                    try:
+                        am_res = await OSINTModules.run_amass(target)
+                        db.add(ScanLog(
+                            case_id=case.id,
+                            tool_name="amass",
+                            command_executed=am_res["command"],
+                            status="COMPLETED" if am_res["return_code"] == 0 else "FAILED",
+                            stdout_log=am_res["raw_log"],
+                            return_code=am_res["return_code"],
+                            execution_time_sec=am_res["duration"]
+                        ))
+                        for sub in am_res.get("subdomains", []):
+                            db.add(Entity(case_id=case.id, category="SUBDOMAIN", value=sub, source_tool="amass"))
+                            discovered_entities_text.append(f"Amass Subdomain: {sub}")
+                        await db.commit()
+                    except Exception as e:
+                        print(f"[-] Error in amass: {e}")
 
             # 6. Automated AI Threat Summarization
-            summary = await AIAnalyst.generate_dossier_summary(target, target_type, discovered_entities_text)
-            case.ai_summary = summary
+            try:
+                summary = await AIAnalyst.generate_dossier_summary(target, target_type, discovered_entities_text)
+                case.ai_summary = summary
+            except Exception as e:
+                case.ai_summary = f"AI summary generation failed: {str(e)}"
+
             case.status = CaseStatus.COMPLETED
 
         except Exception as e:
+            print(f"[-] Fatal pipeline exception: {traceback.format_exc()}")
             case.status = CaseStatus.FAILED
             case.notes = f"Pipeline execution failure: {str(e)}"
 
@@ -589,7 +646,6 @@ async def delete_case(
     if not case:
         raise HTTPException(status_code=404, detail="Case not found.")
 
-    # Explicit SQL execution to bypass ORM async lazy load cascades
     await db.execute(delete(Entity).where(Entity.case_id == case_id))
     await db.execute(delete(ScanLog).where(ScanLog.case_id == case_id))
     await db.execute(delete(Case).where(Case.id == case_id))
