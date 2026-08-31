@@ -36,7 +36,7 @@ from app.nlp.ai_analyst import AIAnalyst
 
 app = FastAPI(
     title="OSINT Investigation Platform API",
-    version="1.4.6",
+    version="1.4.7",
     description="Multi-Entity OSINT Automation & Intelligence Visualization Platform"
 )
 
@@ -225,7 +225,7 @@ async def delete_user(
 # ==================== Background Investigation Pipeline ====================
 
 async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target_type: str, selected_tools: Optional[List[str]]):
-    """Orchestrates modular recon CLI execution with full isolation and state commit."""
+    """Orchestrates modular recon CLI execution with full transaction rollback isolation."""
     async with AsyncSessionLocal() as db:
         case = await db.get(Case, case_id)
         if not case:
@@ -256,6 +256,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                         discovered_entities_text.append(r)
                     await db.commit()
                 except Exception as e:
+                    await db.rollback()
                     print(f"[-] Error in native_engine: {e}")
 
             # 2. Identity & Person Tools
@@ -280,6 +281,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(f"Maigret Account: {a}")
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in maigret: {e}")
 
                 if is_tool_enabled("sherlock"):
@@ -299,6 +301,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(f"Sherlock Account: {a}")
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in sherlock: {e}")
 
             # 3. Email Tools
@@ -320,6 +323,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(f"Registered Service: {p}")
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in holehe: {e}")
 
             # 4. Phone Tools
@@ -341,6 +345,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(f"Phone Intel: {d}")
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in phoneinfoga: {e}")
 
             # 5. Domain, WAF & Infrastructure
@@ -362,6 +367,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(f"WAF Protection: {w}")
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in wafw00f: {e}")
 
                 if is_tool_enabled("httpx"):
@@ -381,6 +387,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(f"HTTP Probe: {h}")
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in httpx: {e}")
 
                 if is_tool_enabled("theHarvester"):
@@ -403,6 +410,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(f"theHarvester Email: {em}")
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in theHarvester: {e}")
 
                 if is_tool_enabled("dnsrecon"):
@@ -422,6 +430,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(rec)
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in dnsrecon: {e}")
 
                 if is_tool_enabled("whatweb"):
@@ -441,6 +450,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(f"Web Tech Stack: {t}")
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in whatweb: {e}")
 
                 if is_tool_enabled("nmap"):
@@ -460,6 +470,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(f"Open Port: {p}")
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in nmap: {e}")
 
                 if is_tool_enabled("sublist3r"):
@@ -479,6 +490,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(f"Sublist3r Subdomain: {sub}")
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in sublist3r: {e}")
 
                 if is_tool_enabled("amass"):
@@ -498,6 +510,7 @@ async def execute_investigation_pipeline(case_id: uuid.UUID, target: str, target
                             discovered_entities_text.append(f"Amass Subdomain: {sub}")
                         await db.commit()
                     except Exception as e:
+                        await db.rollback()
                         print(f"[-] Error in amass: {e}")
 
             # 6. Automated AI Threat Summarization

@@ -126,10 +126,12 @@ class ScanLog(Base):
     case: Mapped["Case"] = relationship(back_populates="scan_logs")
 
 async def init_db():
-    """Initializes schema and auto-migrates missing columns."""
+    """Initializes schema and applies automatic migration patches."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Auto-migration safety patches
+        # Automatic DB schema compatibility patches
+        await conn.execute(text("DO $$ BEGIN BEGIN ALTER TABLE entities ALTER COLUMN raw_data DROP NOT NULL; EXCEPTION WHEN undefined_column THEN NULL; END; END $$;"))
+        await conn.execute(text("DO $$ BEGIN BEGIN ALTER TABLE entities ALTER COLUMN raw_data SET DEFAULT '{}'::jsonb; EXCEPTION WHEN undefined_column THEN NULL; END; END $$;"))
         await conn.execute(text("ALTER TABLE entities ADD COLUMN IF NOT EXISTS properties JSONB DEFAULT '{}'::jsonb;"))
         await conn.execute(text("ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS command_executed TEXT;"))
         await conn.execute(text("ALTER TABLE scan_logs ADD COLUMN IF NOT EXISTS return_code INTEGER DEFAULT 0;"))
