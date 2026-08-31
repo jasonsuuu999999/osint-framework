@@ -39,6 +39,7 @@ class UserRole(str, Enum):
     ANALYST = "ANALYST"
     VIEWER = "VIEWER"
 
+# PostgreSQL Enum definitions with auto type creation mapping
 TargetTypeEnum = PG_ENUM(
     TargetType,
     name="targettype",
@@ -126,10 +127,32 @@ class ScanLog(Base):
     case: Mapped["Case"] = relationship(back_populates="scan_logs")
 
 async def init_db():
-    """Initializes schema and applies automatic migration patches."""
+    """Initializes schema, ensures custom enum types, and applies table migrations."""
     async with engine.begin() as conn:
+        # 1. Pre-create PostgreSQL enum types if they do not exist
+        await conn.execute(text("""
+            DO $$ BEGIN
+                CREATE TYPE userrole AS ENUM ('ADMIN', 'ANALYST', 'VIEWER');
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$;
+        """))
+        await conn.execute(text("""
+            DO $$ BEGIN
+                CREATE TYPE targettype AS ENUM ('DOMAIN', 'PERSON', 'EMAIL', 'PHONE', 'UNKNOWN');
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$;
+        """))
+        await conn.execute(text("""
+            DO $$ BEGIN
+                CREATE TYPE casestatus AS ENUM ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED');
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$;
+        """))
+
+        # 2. Create tables
         await conn.run_sync(Base.metadata.create_all)
-        # Automatic DB schema compatibility patches
+
+        # 3. Apply schema migration patches for backward-compatibility
         await conn.execute(text("DO $$ BEGIN BEGIN ALTER TABLE entities ALTER COLUMN raw_data DROP NOT NULL; EXCEPTION WHEN undefined_column THEN NULL; END; END $$;"))
         await conn.execute(text("DO $$ BEGIN BEGIN ALTER TABLE entities ALTER COLUMN raw_data SET DEFAULT '{}'::jsonb; EXCEPTION WHEN undefined_column THEN NULL; END; END $$;"))
         await conn.execute(text("ALTER TABLE entities ADD COLUMN IF NOT EXISTS properties JSONB DEFAULT '{}'::jsonb;"))
